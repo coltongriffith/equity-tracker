@@ -123,7 +123,7 @@ function PieDetail({ data, dark, detail, onSelect }) {
   const total = data.reduce((s, d) => s + d.value, 0);
   const t = T(dark);
   if (!data.length || total <= 0) return null;
-  const sz = 220, cx = 110, cy = 110, r = 82;
+  const sz = 150, cx = 75, cy = 75, r = 58;
   let cum = -Math.PI / 2;
   const sl = data.map((d, i) => {
     const a = (d.value / total) * 2 * Math.PI, sa = cum; cum += a;
@@ -132,42 +132,40 @@ function PieDetail({ data, dark, detail, onSelect }) {
   });
   const sel = sl.find(s => s.l === detail);
   return (
-    <div style={{ display: "flex", gap: 20, alignItems: "flex-start", flexWrap: "wrap" }}>
-      <div>
-        <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`} style={{ cursor: "pointer" }}>
-          {sl.map(s => <path key={s.i} d={s.p} fill={s.c} stroke={t.bg} strokeWidth={2.5} opacity={hov === null || hov === s.i ? 1 : 0.25} style={{ transition: "opacity .2s, transform .15s", transformOrigin: `${cx}px ${cy}px`, transform: (detail === s.l) ? "scale(1.04)" : "scale(1)" }} onMouseEnter={() => setHov(s.i)} onMouseLeave={() => setHov(null)} onClick={() => onSelect(s.l === detail ? null : s.l)} />)}
-          <circle cx={cx} cy={cy} r={42} fill={t.s} />
-          {(hov !== null || detail) && <text x={cx} y={cy + 5} textAnchor="middle" fill={t.fg} fontSize="14" fontWeight="700">{detail ? sl.find(s => s.l === detail)?.pct : sl[hov]?.pct}%</text>}
-        </svg>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11, marginTop: 8 }}>
-          {sl.slice(0, 14).map(s => (
-            <div key={s.i} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", opacity: (!detail && hov === null) || hov === s.i || detail === s.l ? 1 : 0.35, fontWeight: detail === s.l ? 700 : 400, transition: "all .15s" }} onMouseEnter={() => setHov(s.i)} onMouseLeave={() => setHov(null)} onClick={() => onSelect(s.l === detail ? null : s.l)}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: s.c, flexShrink: 0 }} />
-              <span style={{ color: t.fg }}>{s.l}</span>
-              <span style={{ color: t.mt, marginLeft: "auto" }}>{s.pct}%</span>
-            </div>
-          ))}
-        </div>
+    <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+      <svg width={sz} height={sz} viewBox={`0 0 ${sz} ${sz}`} style={{ cursor: "pointer", flexShrink: 0 }}>
+        {sl.map(s => <path key={s.i} d={s.p} fill={s.c} stroke={t.bg} strokeWidth={2} opacity={hov === null || hov === s.i ? 1 : 0.25} style={{ transition: "opacity .2s", transformOrigin: `${cx}px ${cy}px`, transform: (detail === s.l) ? "scale(1.03)" : "scale(1)" }} onMouseEnter={() => setHov(s.i)} onMouseLeave={() => setHov(null)} onClick={() => onSelect(s.l === detail ? null : s.l)} />)}
+        <circle cx={cx} cy={cy} r={30} fill={t.s} />
+        {(hov !== null || detail) && <text x={cx} y={cy + 4} textAnchor="middle" fill={t.fg} fontSize="12" fontWeight="700">{detail ? sl.find(s => s.l === detail)?.pct : sl[hov]?.pct}%</text>}
+      </svg>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 14px", fontSize: 11, flex: 1, minWidth: 180, alignContent: "flex-start" }}>
+        {sl.slice(0, 14).map(s => (
+          <div key={s.i} style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", opacity: (!detail && hov === null) || hov === s.i || detail === s.l ? 1 : 0.3, fontWeight: detail === s.l ? 700 : 400, transition: "all .15s", width: "calc(50% - 7px)" }} onMouseEnter={() => setHov(s.i)} onMouseLeave={() => setHov(null)} onClick={() => onSelect(s.l === detail ? null : s.l)}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: s.c, flexShrink: 0 }} />
+            <span style={{ color: t.fg, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.l}</span>
+            <span style={{ color: t.mt, marginLeft: "auto", flexShrink: 0 }}>{s.pct}%</span>
+          </div>
+        ))}
       </div>
       {sel && (
-        <div style={{ ...t.card, padding: 16, minWidth: 240, maxWidth: 320, flex: 1 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: t.fg2 }}>{sel.l}</div>
+        <div style={{ ...t.card, padding: 14, minWidth: 220, maxWidth: 300, flex: "0 0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: t.fg2 }}>{sel.l}</div>
             <button onClick={() => onSelect(null)} style={{ background: "none", border: "none", cursor: "pointer", color: t.mt, padding: 2 }}><X size={14} /></button>
           </div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: sel.c, marginBottom: 4, fontVariantNumeric: "tabular-nums" }}>{$(sel.val)}</div>
-          <div style={{ fontSize: 11, color: t.mt, marginBottom: 12 }}>{sel.pct}% of portfolio</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: sel.c, marginBottom: 2, fontVariantNumeric: "tabular-nums" }}>{$(sel.val)}</div>
+          <div style={{ fontSize: 10, color: t.mt, marginBottom: 10 }}>{sel.pct}% of portfolio</div>
           {sel.items.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {sel.items.map((it, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "6px 0", borderBottom: `1px solid ${t.bd}` }}>
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "4px 0", borderBottom: `1px solid ${t.bd}` }}>
                   <div>
                     <div style={{ fontWeight: 600, color: t.fg }}>{it.label}</div>
-                    <div style={{ color: t.mt }}>{it.sub}</div>
+                    <div style={{ color: t.mt, fontSize: 10 }}>{it.sub}</div>
                   </div>
                   <div style={{ textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                     <div style={{ fontWeight: 600, color: t.fg }}>{$(it.value)}</div>
-                    {it.pnl !== undefined && <div style={{ color: gc(it.pnl, dark), fontWeight: 600 }}>{$(it.pnl)}</div>}
+                    {it.pnl !== undefined && <div style={{ color: gc(it.pnl, dark), fontWeight: 600, fontSize: 10 }}>{$(it.pnl)}</div>}
                   </div>
                 </div>
               ))}
