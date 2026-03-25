@@ -34,65 +34,18 @@ function calcTax(income, province) {
 
 function y2c(gf) { if (!gf) return null; const [ex, sym] = gf.split(":"); if (!sym) return null; const s = sym.toUpperCase().replace(".H", "-H"); return ex.toUpperCase() === "CVE" ? s + ".V" : ex.toUpperCase() === "CNSX" ? s + ".CN" : ex.toUpperCase() === "TSE" ? s + ".TO" : s; }
 
-// ─── DEFAULT DATA ────────────────────────────────────────────────────────────
+// ─── DEFAULT DATA (empty for new users) ──────────────────────────────────────
 const DD = {
-  options: [
-    { id: "o1", company: "Apex Critical Metals", gfTicker: "CNSX:APXC", amount: 150000, exercisePrice: 0.85, expiry: "2030-03-14", type: "Option", notes: "" },
-    { id: "o2", company: "SWMBRD Sports", gfTicker: "CNSX:SWIM", amount: 50000, exercisePrice: 0.105, expiry: "2026-09-12", type: "Option", notes: "" },
-    { id: "o3", company: "Zimtu Capital", gfTicker: "CVE:ZC", amount: 20000, exercisePrice: 1.125, expiry: "2026-06-10", type: "Option", notes: "" },
-    { id: "o4", company: "Zimtu Capital", gfTicker: "CVE:ZC", amount: 8000, exercisePrice: 1.15, expiry: "2027-03-24", type: "Option", notes: "" },
-    { id: "o5", company: "Core Silver Corp", gfTicker: "CNSX:CC", amount: 20000, exercisePrice: 0.61, expiry: "2029-07-21", type: "Option", notes: "" },
-    { id: "o6", company: "Zimtu Capital", gfTicker: "CVE:ZC", amount: 50000, exercisePrice: 0, expiry: null, type: "RSU", notes: "Vest: Jul 29 2026", vestingDates: [{ date: "2026-07-29", pct: 100, amount: 50000 }] },
-    { id: "o7", company: "Apex Critical Metals", gfTicker: "CNSX:APXC", amount: 50000, exercisePrice: 0, expiry: null, type: "RSU", notes: "25% quarterly from May 2026", vestingDates: [{ date: "2026-05-08", pct: 25, amount: 12500 }, { date: "2026-09-08", pct: 25, amount: 12500 }, { date: "2027-01-08", pct: 25, amount: 12500 }, { date: "2027-05-08", pct: 25, amount: 12500 }] },
-    { id: "o8", company: "Apex Critical Metals", gfTicker: "CNSX:APXC", amount: 50000, exercisePrice: 1.97, expiry: "2030-09-08", type: "Option", notes: "" },
-    { id: "o9", company: "Future Fuels Inc.", gfTicker: "CVE:FTUR", amount: 50000, exercisePrice: 1.2, expiry: "2028-10-20", type: "Option", notes: "" },
-    { id: "o10", company: "Future Fuels Inc.", gfTicker: "CVE:FTUR", amount: 50000, exercisePrice: 0, expiry: null, type: "RSU", notes: "" },
-    { id: "o11", company: "Zimtu Capital", gfTicker: "CVE:ZC", amount: 125000, exercisePrice: 0.14, expiry: "2030-07-15", type: "Option", notes: "" },
-    { id: "o12", company: "Star Copper", gfTicker: "CNSX:STCU", amount: 50000, exercisePrice: 0.94, expiry: "2027-06-09", type: "Option", notes: "" },
-    { id: "o13", company: "Core Silver Corp", gfTicker: "CNSX:CC", amount: 25000, exercisePrice: 0.81, expiry: "2030-01-14", type: "Option", notes: "" },
-  ],
-  stocks: [
-    { id: "s1", company: "Apex Critical Metals", gfTicker: "CNSX:APXC", shares: 75000, costBasis: 0.10, broker: "Canaccord", notes: "", warrants: null },
-    { id: "s2", company: "Brasnova Energy Materials", gfTicker: "CVE:BEM", shares: 2500, costBasis: 0.22, broker: "Canaccord", notes: "", warrants: { amount: 2500, exercise: 0.60, expiry: "2026-09-13" } },
-    { id: "s3", company: "Blockchain Venture Capital", gfTicker: "CNSX:BVCI", shares: 1333, costBasis: 0.75, broker: "Canaccord", notes: "", warrants: { amount: 1333, exercise: 0.92, expiry: null } },
-    { id: "s4", company: "Future Fuels Inc.", gfTicker: "CVE:FTUR", shares: 0, costBasis: 0.25, broker: "Canaccord", notes: "Warrants only", warrants: { amount: 10000, exercise: 0.40, expiry: "2026-12-19" } },
-    { id: "s5", company: "Star Copper", gfTicker: "CNSX:STCU", shares: 10000, costBasis: 0.25, broker: "Canaccord", notes: "", warrants: { amount: 20000, exercise: 0.32, expiry: "2027-04-09" } },
-    { id: "s6", company: "Discovery Energy Metals", gfTicker: "CNSX:DEMC", shares: 50000, costBasis: 0.10, broker: "Ventum", notes: "", warrants: { amount: 20000, exercise: 0.15, expiry: null } },
-    { id: "s7", company: "Aeonian Resources", gfTicker: "CVE:ALTN", shares: 6000, costBasis: 0.05, broker: "Canaccord", notes: "", warrants: { amount: 6000, exercise: 0.10, expiry: null } },
-    { id: "s8", company: "Guide AI Health", gfTicker: null, shares: 150000, costBasis: 0.05, broker: "Canaccord", notes: "No public ticker", warrants: null },
-    { id: "s9", company: "Core Silver Corp", gfTicker: "CNSX:CC", shares: 40000, costBasis: 0.25, broker: "Canaccord", notes: "", warrants: { amount: 40000, exercise: 0.315, expiry: "2027-08-05" } },
-    { id: "s10", company: "HM Exploration", gfTicker: "CNSX:HM", shares: 90909, costBasis: 0.11, broker: "Canaccord", notes: "", warrants: { amount: 45455, exercise: 0.16, expiry: "2028-11-15" } },
-    { id: "s11", company: "Future Fuels Inc.", gfTicker: "CVE:FTUR", shares: 12500, costBasis: 0.40, broker: "Ventum", notes: "", warrants: { amount: 12500, exercise: 0.60, expiry: null } },
-    { id: "s12", company: "Sceptre Ventures", gfTicker: "CVE:SVP-H", shares: 700, costBasis: 0, broker: "Ventum", notes: "", warrants: null },
-    { id: "s13", company: "1490660 LTD", gfTicker: "CVE:SVP-H", shares: 50000, costBasis: 0.10, broker: "Canaccord", notes: "", warrants: { amount: 50000, exercise: 0.15, expiry: null } },
-    { id: "s14", company: "Kiboko Gold", gfTicker: "CVE:KIB", shares: 62500, costBasis: 0.08, broker: "Ventum", notes: "", warrants: { amount: 62500, exercise: 0.12, expiry: null } },
-  ],
-  promissoryNotes: [
-    { id: "p1", company: "SWMBRD Sports", gfTicker: "CNSX:SWIM", shares: 100000, costBasis: 0.035, notes: "" },
-    { id: "p2", company: "Crown Minerals", gfTicker: null, shares: 1600000, costBasis: 0.02, notes: "Private" },
-    { id: "p3", company: "Capacitor Metals", gfTicker: null, shares: 250000, costBasis: 0.02, notes: "Private" },
-  ],
-  assets: [
-    { id: "a1", name: "Home", category: "Real Estate", value: 150000, notes: "Estimated equity" },
-    { id: "a2", name: "Nevada Land", category: "Real Estate", value: 1000, notes: "" },
-    { id: "a3", name: "Oregon Land", category: "Real Estate", value: 500, notes: "" },
-    { id: "a4", name: "Addy Investments", category: "Investment", value: 1255, notes: "" },
-    { id: "a5", name: "Cash (WealthSimple)", category: "Cash", value: 600, notes: "" },
-    { id: "a6", name: "Stocks & Crypto (WS)", category: "Investment", value: 32000, notes: "" },
-    { id: "a7", name: "Cash (Canaccord & Ventum)", category: "Cash", value: 1500, notes: "" },
-    { id: "a8", name: "Cash (TD)", category: "Cash", value: 20000, notes: "" },
-  ],
-  liabilities: [{ id: "l1", name: "Credit Cards", category: "Debt", value: 0, notes: "" }],
-  taxEvents: [
-    { id: "t1", ticker: "APXC", year: 2025, sharesSold: 5000, soldPrice: 0.98, purchasePrice: 0.15, gain: 4150, taxOwed: 798.88 },
-    { id: "t2", ticker: "APXC", year: 2025, sharesSold: 5000, soldPrice: 1.90, purchasePrice: 0.15, gain: 8750, taxOwed: 1684.38 },
-    { id: "t3", ticker: "APXC", year: 2025, sharesSold: 5000, soldPrice: 3.40, purchasePrice: 0.15, gain: 16250, taxOwed: 3128.13 },
-    { id: "t4", ticker: "APXC", year: 2025, sharesSold: 5000, soldPrice: 4.92, purchasePrice: 0.15, gain: 23850, taxOwed: 4591.13 },
-  ],
-  taxSettings: { province: "BC", annualIncome: 80000 },
+  options: [],
+  stocks: [],
+  promissoryNotes: [],
+  assets: [],
+  liabilities: [],
+  taxEvents: [],
+  taxSettings: { province: "BC", annualIncome: 0 },
 };
 
-const FP = { "CNSX:APXC": 2.23, "CNSX:SWIM": 0.01, "CVE:ZC": 0.58, "CNSX:CC": 0.48, "CVE:FTUR": 0.49, "CNSX:STCU": 1.05, "CVE:BEM": 0.13, "CNSX:BVCI": 0.20, "CNSX:DEMC": 0.13, "CVE:ALTN": 0.15, "CNSX:HM": 0.43, "CVE:SVP-H": 0.28, "CVE:KIB": 0.17 };
+const FP = {};
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function ld(k, f) { try { const r = localStorage.getItem(k); return r ? (JSON.parse(r) ?? f) : f; } catch { return f; } }
@@ -228,6 +181,19 @@ function parseXL(wb) {
   return res;
 }
 function dStr(v) { if (!v) return null; if (typeof v === "number") return new Date((v - 25569) * 86400000).toISOString().split("T")[0]; return String(v).split("T")[0]; }
+
+// ─── EMPTY STATE ─────────────────────────────────────────────────────────────
+function Empty({ icon: Icon, title, sub, dark, onAdd }) {
+  const t = T(dark);
+  return (
+    <div style={{ textAlign: "center", padding: "36px 16px" }}>
+      <div style={{ width: 48, height: 48, borderRadius: 12, background: dark ? "#1c1c34" : "#f3f4f6", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}><Icon size={22} style={{ color: t.mt }} /></div>
+      <div style={{ fontWeight: 600, fontSize: 14, color: t.fg, marginBottom: 4 }}>{title}</div>
+      <div style={{ fontSize: 12, color: t.mt, maxWidth: 360, margin: "0 auto 16px" }}>{sub}</div>
+      {onAdd && <button onClick={onAdd} style={{ height: 34, border: "none", borderRadius: 8, padding: "0 16px", background: t.acc, color: "#fff", fontWeight: 600, fontSize: 12, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}><Plus size={13} /> Add your first</button>}
+    </div>
+  );
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
@@ -409,7 +375,7 @@ export default function App() {
 
           <div style={_.panel}>
             <SectionHeader title="Allocation" icon={PieIcon} />
-            <PieDetail data={allocData} dark={dk} detail={pieDetail} onSelect={setPieDetail} />
+            {allocData.length > 0 ? <PieDetail data={allocData} dark={dk} detail={pieDetail} onSelect={setPieDetail} /> : <Empty icon={PieIcon} title="No allocation data yet" sub="Add stock or option positions to see your portfolio breakdown." dark={dk} />}
           </div>
 
           <div style={_.panel}>
@@ -436,7 +402,7 @@ export default function App() {
                     <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{N(al, 1)}%</td>
                     {ed && <td style={_.td}><button onClick={() => delItem("stocks", s.id)} style={{ background: "none", border: "none", cursor: "pointer", color: t.rd, padding: 2 }}><Trash2 size={13} /></button></td>}
                   </tr>);
-                })}</tbody>
+                })}{eS.length === 0 && <tr><td colSpan={12} style={{ padding: 0, border: "none" }}><Empty icon={BarChart3} title="No stock positions yet" sub="Add your holdings manually or upload an Excel file to get started." dark={dk} onAdd={() => { addItem("stocks", { company: "New Position", gfTicker: "", shares: 0, costBasis: 0, broker: "", notes: "", warrants: null }); toggleEd("stocks"); }} /></td></tr>}</tbody>
               </table>
             </div>
           </div>
