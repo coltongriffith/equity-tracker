@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { TrendingUp, TrendingDown, DollarSign, Home, Landmark, Coins, BarChart3, PieChart as PieIcon, FileText, Calendar, Calculator, Edit3, Check, X, ChevronRight, Briefcase, CreditCard, Car, Package, Building2, Wallet, CircleDot, Plus, Trash2, Upload, Download, Sun, Moon, RefreshCw } from "lucide-react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { TrendingUp, TrendingDown, DollarSign, Home, Landmark, Coins, BarChart3, PieChart as PieIcon, FileText, Calendar, Calculator, Edit3, Check, X, ChevronRight, Briefcase, CreditCard, Car, Package, Building2, Wallet, CircleDot, Plus, Trash2, Upload, Download, Sun, Moon, RefreshCw, LogOut } from "lucide-react";
+import { supabase } from "./supabaseClient";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const SK = "eq-data-v4", SSK = "eq-set-v4", PK = "eq-prices-v4", NK = "eq-nw-v4";
@@ -198,19 +199,67 @@ function Empty({ icon: Icon, title, sub, dark, onAdd }) {
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═════════════════════════════════════════════════════════════════════════════
-export default function App() {
-  const [data, setData] = useState(() => ld(SK, DD));
-  const [settings, setSettings] = useState(() => ld(SSK, { currency: "CAD", dark: true, tab: "portfolio" }));
-  const [prices, setPrices] = useState(() => ld(PK, FP));
-  const [nwH, setNwH] = useState(() => ld(NK, []));
+export default function App({ session }) {
+  const userId = session?.user?.id;
+  const userEmail = session?.user?.email;
+
+  const [data, setData] = useState(DD);
+  const [settings, setSettings] = useState({ currency: "CAD", dark: true, tab: "portfolio" });
+  const [prices, setPrices] = useState(FP);
+  const [nwH, setNwH] = useState([]);
   const [pSt, setPSt] = useState("idle");
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState("totalValue");
   const [sortDir, setSortDir] = useState("desc");
   const [uploading, setUploading] = useState(false);
-  const [editing, setEditing] = useState(null); // which section is being edited
+  const [editing, setEditing] = useState(null);
   const [pieDetail, setPieDetail] = useState(null);
-  const [taxCalc, setTaxCalc] = useState({ gains: "", income: String(data.taxSettings?.annualIncome || 80000), province: data.taxSettings?.province || "BC" });
+  const [dbLoaded, setDbLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [taxCalc, setTaxCalc] = useState({ gains: "", income: "0", province: "BC" });
+  const saveTimer = useRef(null);
+
+  // ─── Load from Supabase on mount ─────────────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      const { data: row } = await supabase.from("user_data").select("*").eq("user_id", userId).single();
+      if (row) {
+        setData(row.data || DD);
+        setSettings(row.settings || { currency: "CAD", dark: true, tab: "portfolio" });
+        setPrices(row.prices || FP);
+        setNwH(row.nw_history || []);
+        const d = row.data || DD;
+        setTaxCalc(p => ({ ...p, income: String(d.taxSettings?.annualIncome || 0), province: d.taxSettings?.province || "BC" }));
+      } else {
+        // First time user — insert empty row
+        await supabase.from("user_data").insert({ user_id: userId, data: DD, settings: { currency: "CAD", dark: true, tab: "portfolio" }, prices: FP, nw_history: [] });
+      }
+      setDbLoaded(true);
+    })();
+  }, [userId]);
+
+  // ─── Save to Supabase (debounced 1.5s after last change) ────────────────
+  const saveToDb = useCallback(() => {
+    if (!userId || !dbLoaded) return;
+    setSaving(true);
+    supabase.from("user_data").update({ data, settings, prices, nw_history: nwH, }).eq("user_id", userId).then(() => setSaving(false));
+  }, [userId, dbLoaded, data, settings, prices, nwH]);
+
+  useEffect(() => {
+    if (!dbLoaded) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(saveToDb, 1500);
+    return () => clearTimeout(saveTimer.current);
+  }, [data, settings, prices, nwH, saveToDb, dbLoaded]);
+
+  // Also keep localStorage as offline fallback
+  useEffect(() => { if (dbLoaded) localStorage.setItem(SK, JSON.stringify(data)); }, [data, dbLoaded]);
+  useEffect(() => { if (dbLoaded) localStorage.setItem(SSK, JSON.stringify(settings)); }, [settings, dbLoaded]);
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+  }
 
   const dk = settings.dark, cur = settings.currency, tab = settings.tab || "portfolio";
   const t = T(dk);
@@ -220,11 +269,6 @@ export default function App() {
   }, []);
   const addItem = useCallback((section, item) => setData(p => ({ ...p, [section]: [...(p[section] || []), { id: crypto.randomUUID(), ...item }] })), []);
   const delItem = useCallback((section, id) => setData(p => ({ ...p, [section]: (p[section] || []).filter(x => x.id !== id) })), []);
-
-  useEffect(() => { localStorage.setItem(SK, JSON.stringify(data)); }, [data]);
-  useEffect(() => { localStorage.setItem(SSK, JSON.stringify(settings)); }, [settings]);
-  useEffect(() => { localStorage.setItem(PK, JSON.stringify(prices)); }, [prices]);
-  useEffect(() => { localStorage.setItem(NK, JSON.stringify(nwH)); }, [nwH]);
 
   const allTk = useMemo(() => { const s = new Set(); [...(data.options || []), ...(data.stocks || []), ...(data.promissoryNotes || [])].forEach(x => x.gfTicker && s.add(x.gfTicker.toUpperCase())); return [...s]; }, [data]);
 
@@ -356,6 +400,8 @@ export default function App() {
             <button style={_.btn(t.acc, "#fff")} onClick={fetchP}><RefreshCw size={12} /> Prices</button>
             <button style={_.btn(t.s, t.fg, `1px solid ${t.bd}`)} onClick={() => dl(JSON.stringify(data, null, 2), "equity.json", "application/json")}><Download size={12} /> JSON</button>
             <label style={{ ..._.btn(t.s, t.fg, `1px solid ${t.bd}`), cursor: "pointer" }}><Upload size={12} /> {uploading ? "…" : "Excel"}<input type="file" accept=".xlsx,.xls" onChange={handleUpload} style={{ display: "none" }} /></label>
+            {saving && <span style={{ fontSize: 10, color: t.mt }}>Saving…</span>}
+            <button style={_.btn(t.s, t.mt, `1px solid ${t.bd}`)} onClick={handleSignOut} title={userEmail}><LogOut size={12} /></button>
           </div>
         </header>
 
