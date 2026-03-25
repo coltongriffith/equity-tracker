@@ -170,11 +170,32 @@ function loadSJ() { return new Promise(r => { if (sj || window.XLSX) { sj = true
 function parseXL(wb) {
   const res = { stocks: [], options: [], promissoryNotes: [] }, sheet = wb.Sheets[wb.SheetNames[0]]; if (!sheet) return res;
   const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null }); let sec = null;
+
+  function extractTicker(sheet, row, col) {
+    const addr = window.XLSX.utils.encode_cell({ r: row, c: col });
+    const cell = sheet[addr];
+    if (!cell) return null;
+    // Check formula property (cell.f)
+    const sources = [cell.f, cell.v, cell.w].filter(Boolean).map(String);
+    for (const s of sources) {
+      // Pattern 1: GOOGLEFINANCE("CNSX:APXC") — standard
+      let m = s.match(/GOOGLEFINANCE\("([^"]+)"\)/i);
+      if (m) return m[1].toUpperCase();
+      // Pattern 2: GOOGLEFINANCE(""CNSX:APXC"") — Google Sheets DUMMYFUNCTION export with escaped quotes
+      m = s.match(/GOOGLEFINANCE\(""+([^"]+)""+\)/i);
+      if (m) return m[1].toUpperCase();
+      // Pattern 3: GOOGLEFINANCE(""CNSX:apxc"") — same but case insensitive
+      m = s.match(/GOOGLEFINANCE\(\\"+"?([A-Za-z]+:[A-Za-z0-9._-]+)/i);
+      if (m) return m[1].toUpperCase();
+    }
+    return null;
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i], a = String(row?.[0] || "").trim();
     if (a === "Options") { sec = "options"; continue; } if (a.startsWith("Stocks &")) { sec = "stocks"; continue; } if (a.startsWith("Promissory")) { sec = "promissory"; continue; }
     if (a.startsWith("Total") || a === "TOTAL" || a === "TAXES" || !a || a.startsWith("Stocks sold")) { if (a.startsWith("Stocks sold")) sec = null; continue; }
-    let gf = null; const cell = sheet[window.XLSX.utils.encode_cell({ r: i, c: 4 })]; if (cell?.f) { const m = cell.f.match(/GOOGLEFINANCE\("([^"]+)"\)/i); if (m) gf = m[1]; }
+    const gf = extractTicker(sheet, i, 4);
     if (sec === "options") { const ex = Number(row[2]) || 0; res.options.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, amount: Number(row[1]) || 0, exercisePrice: ex, expiry: row[6] ? dStr(row[6]) : null, type: !ex ? "RSU" : "Option", notes: "" }); }
     else if (sec === "stocks") { const wa = Number(row[7]) || 0; res.stocks.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, shares: Number(row[1]) || 0, costBasis: Number(row[2]) || 0, broker: String(row[10] || ""), notes: "", warrants: wa > 0 ? { amount: wa, exercise: Number(row[8]) || 0, expiry: row[11] ? dStr(row[11]) : null } : null }); }
     else if (sec === "promissory") { res.promissoryNotes.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, shares: Number(row[1]) || 0, costBasis: Number(row[2]) || 0, notes: "" }); }
@@ -644,3 +665,4 @@ function Cd({ dk, icon: Icon, title, value, sub, color }) {
     <div><div style={{ color: t.mt, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>{title}</div><div style={{ fontSize: 18, fontWeight: 700, color: color || t.fg2, fontVariantNumeric: "tabular-nums" }}>{value}</div>{sub && <div style={{ marginTop: 1, fontSize: 11, color: color || t.mt, fontWeight: 600 }}>{sub}</div>}</div>
   </div>);
 }
+
