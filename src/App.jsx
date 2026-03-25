@@ -235,26 +235,49 @@ function VestProgress({ grant, dark }) {
 let sj = false;
 function loadSJ() { return new Promise(r => { if (sj || window.XLSX) { sj = true; r(); return; } const s = document.createElement("script"); s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; s.onload = () => { sj = true; r(); }; document.head.appendChild(s); }); }
 function parseXL(wb) {
-  const res = { stocks: [], options: [], promissoryNotes: [] }, sheet = wb.Sheets[wb.SheetNames[0]]; if (!sheet) return res;
+  const res = { stocks: [], options: [], promissoryNotes: [], vestingEvents: [] }, sheet = wb.Sheets[wb.SheetNames[0]]; if (!sheet) return res;
   const rows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null }); let sec = null;
 
   function extractTicker(sheet, row, col) {
     const addr = window.XLSX.utils.encode_cell({ r: row, c: col });
     const cell = sheet[addr];
     if (!cell) return null;
-    // Check formula property (cell.f)
     const sources = [cell.f, cell.v, cell.w].filter(Boolean).map(String);
     for (const s of sources) {
-      // Pattern 1: GOOGLEFINANCE("CNSX:APXC") — standard
       let m = s.match(/GOOGLEFINANCE\("([^"]+)"\)/i);
       if (m) return m[1].toUpperCase();
-      // Pattern 2: GOOGLEFINANCE(""CNSX:APXC"") — Google Sheets DUMMYFUNCTION export with escaped quotes
       m = s.match(/GOOGLEFINANCE\(""+([^"]+)""+\)/i);
       if (m) return m[1].toUpperCase();
-      // Pattern 3: GOOGLEFINANCE(""CNSX:apxc"") — same but case insensitive
       m = s.match(/GOOGLEFINANCE\(\\"+"?([A-Za-z]+:[A-Za-z0-9._-]+)/i);
       if (m) return m[1].toUpperCase();
     }
+    return null;
+  }
+
+  // Try to parse vesting schedule text like "25% May 8, 2026" from extra columns
+  function parseVestingCols(row) {
+    const dates = [];
+    // Check columns 8-11 (I through L) for vesting schedule text
+    for (let c = 8; c <= 11; c++) {
+      const v = String(row[c] || "").trim();
+      if (!v || v === "NaN") continue;
+      // Match patterns like "25% May 8, 2026" or "25% Sept 8, 2026"
+      const m = v.match(/(\d+)%\s+(.+)/);
+      if (m) {
+        const pct = Number(m[1]);
+        const dateText = m[2].trim();
+        const d = tryParseDate(dateText);
+        if (d) dates.push({ pct, date: d });
+      }
+    }
+    return dates;
+  }
+
+  function tryParseDate(s) {
+    if (!s) return null;
+    // Try standard date parse
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
     return null;
   }
 
@@ -263,7 +286,31 @@ function parseXL(wb) {
     if (a === "Options") { sec = "options"; continue; } if (a.startsWith("Stocks &")) { sec = "stocks"; continue; } if (a.startsWith("Promissory")) { sec = "promissory"; continue; }
     if (a.startsWith("Total") || a === "TOTAL" || a === "TAXES" || !a || a.startsWith("Stocks sold")) { if (a.startsWith("Stocks sold")) sec = null; continue; }
     const gf = extractTicker(sheet, i, 4);
-    if (sec === "options") { const ex = Number(row[2]) || 0; res.options.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, amount: Number(row[1]) || 0, exercisePrice: ex, expiry: row[6] ? dStr(row[6]) : null, type: !ex ? "RSU" : "Option", notes: "" }); }
+    if (sec === "options") {
+      const ex = Number(row[2]) || 0;
+      const isRSU = !ex;
+      const amount = Number(row[1]) || 0;
+      const expiry = row[6] ? dStr(row[6]) : null;
+      const grantDate = row[7] ? dStr(row[7]) : null;
+      res.options.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, amount, exercisePrice: ex, expiry, type: isRSU ? "RSU" : "Option", notes: "" });
+
+      // Generate vesting events
+      const vestCols = parseVestingCols(row);
+      if (vestCols.length > 0) {
+        // RSU with explicit vesting schedule in columns (like "25% May 8, 2026")
+        vestCols.forEach(vc => {
+          res.vestingEvents.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, type: isRSU ? "RSU" : "Option", amount: Math.round(amount * vc.pct / 100), exercisePrice: ex, date: vc.date, notes: `${vc.pct}% vest` });
+        });
+      } else if (isRSU && grantDate) {
+        // RSU with grant date but no detailed schedule — single vest event
+        // Use vesting start date (col 8) if available, otherwise grant date + 1 year
+        const vestDate = row[8] ? dStr(row[8]) : null;
+        res.vestingEvents.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, type: "RSU", amount, exercisePrice: 0, date: vestDate || grantDate, notes: grantDate ? `Grant: ${fmtDate(grantDate)}` : "" });
+      } else if (!isRSU && expiry) {
+        // Stock option — the grant itself is a vesting event (fully vested at grant, exercisable until expiry)
+        res.vestingEvents.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, type: "Option", amount, exercisePrice: ex, date: expiry, notes: `Expires ${fmtDate(expiry)}` });
+      }
+    }
     else if (sec === "stocks") { const wa = Number(row[7]) || 0; res.stocks.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, shares: Number(row[1]) || 0, costBasis: Number(row[2]) || 0, broker: String(row[10] || ""), notes: "", warrants: wa > 0 ? { amount: wa, exercise: Number(row[8]) || 0, expiry: row[11] ? dStr(row[11]) : null } : null }); }
     else if (sec === "promissory") { res.promissoryNotes.push({ id: crypto.randomUUID(), company: a, gfTicker: gf, shares: Number(row[1]) || 0, costBasis: Number(row[2]) || 0, notes: "" }); }
   }
@@ -441,7 +488,7 @@ export default function App({ session }) {
   function ts(k) { if (sortKey === k) setSortDir(p => p === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("desc"); } }
   const ar = k => sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
-  async function handleUpload(e) { const f = e.target.files?.[0]; if (!f) return; setUploading(true); try { await loadSJ(); const p = parseXL(window.XLSX.read(await f.arrayBuffer(), { type: "array" })); if (!p.stocks.length && !p.options.length) { alert("No positions found."); return; } if (window.confirm(`Found ${p.stocks.length} stocks, ${p.options.length} options, ${p.promissoryNotes.length} notes. Replace?`)) { setData(prev => ({ ...prev, ...p })); setTimeout(fetchP, 500); } } catch (err) { alert("Error: " + err.message); } finally { setUploading(false); e.target.value = ""; } }
+  async function handleUpload(e) { const f = e.target.files?.[0]; if (!f) return; setUploading(true); try { await loadSJ(); const p = parseXL(window.XLSX.read(await f.arrayBuffer(), { type: "array" })); if (!p.stocks.length && !p.options.length) { alert("No positions found."); return; } if (window.confirm(`Found ${p.stocks.length} stocks, ${p.options.length} options, ${p.promissoryNotes.length} notes, ${(p.vestingEvents || []).length} vesting events. Replace?`)) { setData(prev => ({ ...prev, ...p })); setTimeout(fetchP, 500); } } catch (err) { alert("Error: " + err.message); } finally { setUploading(false); e.target.value = ""; } }
 
   // Tax calculator
   const taxResult = useMemo(() => {
