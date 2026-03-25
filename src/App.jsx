@@ -295,7 +295,15 @@ export default function App({ session }) {
 
   const fetchP = useCallback(async () => {
     setPSt("loading"); const u = { ...prices }; let ok = 0;
-    for (const tk of allTk) { try { const yt = y2c(tk); if (!yt) continue; const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${yt}?range=1d&interval=1d`); if (!r.ok) continue; const d = await r.json(), p = d?.chart?.result?.[0]?.meta?.regularMarketPrice; if (p) { u[tk] = p; ok++; } } catch {} }
+    for (const tk of allTk) {
+      try {
+        const yt = y2c(tk); if (!yt) continue;
+        const r = await fetch(`/api/price?ticker=${encodeURIComponent(yt)}`);
+        if (!r.ok) continue;
+        const d = await r.json();
+        if (d.price) { u[tk] = d.price; ok++; }
+      } catch {}
+    }
     setPrices(u); setPSt(ok > 0 ? "done" : "error");
   }, [allTk, prices]);
 
@@ -665,4 +673,3 @@ function Cd({ dk, icon: Icon, title, value, sub, color }) {
     <div><div style={{ color: t.mt, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>{title}</div><div style={{ fontSize: 18, fontWeight: 700, color: color || t.fg2, fontVariantNumeric: "tabular-nums" }}>{value}</div>{sub && <div style={{ marginTop: 1, fontSize: 11, color: color || t.mt, fontWeight: 600 }}>{sub}</div>}</div>
   </div>);
 }
-
