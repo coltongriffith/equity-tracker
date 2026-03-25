@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { TrendingUp, TrendingDown, DollarSign, Home, Landmark, Coins, BarChart3, PieChart as PieIcon, FileText, Calendar, Calculator, Edit3, Check, X, ChevronRight, Briefcase, CreditCard, Car, Package, Building2, Wallet, CircleDot, Plus, Trash2, Upload, Download, Sun, Moon, RefreshCw, LogOut } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, Home, Landmark, Coins, BarChart3, PieChart as PieIcon, FileText, Calendar, Calculator, Edit3, Check, X, ChevronRight, Briefcase, CreditCard, Car, Package, Building2, Wallet, CircleDot, Plus, Trash2, Upload, Download, Sun, Moon, RefreshCw, LogOut, Clock, AlertTriangle, CheckCircle2, HelpCircle, Info, ChevronDown } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
@@ -43,6 +43,7 @@ const DD = {
   assets: [],
   liabilities: [],
   taxEvents: [],
+  vestingEvents: [],
   taxSettings: { province: "BC", annualIncome: 0 },
 };
 
@@ -150,18 +151,84 @@ function LineChart({ points, dark }) {
   );
 }
 
-// ─── VESTING TIMELINE ────────────────────────────────────────────────────────
-function Vesting({ events, dark }) {
-  const t = T(dark), now = new Date().toISOString().split("T")[0];
-  if (!events.length) return <div style={{ color: t.mt, fontSize: 12 }}>No vesting events.</div>;
-  return (<div style={{ display: "flex", flexDirection: "column", gap: 0 }}>{events.map((e, i) => {
-    const past = e.date < now;
-    return (<div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", opacity: past ? 0.35 : 1 }}>
-      <div style={{ width: 90, fontSize: 11, color: t.mt, fontWeight: 600, flexShrink: 0, paddingTop: 3 }}>{fmtDate(e.date)}</div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: past ? t.mt : t.acc }} />{i < events.length - 1 && <div style={{ width: 2, height: 30, background: t.bd }} />}</div>
-      <div style={{ paddingBottom: 12 }}><div style={{ fontWeight: 600, fontSize: 12 }}>{e.company}</div><div style={{ fontSize: 11, color: t.mt }}>{N(e.amount)} shares · {$(e.currentValue)}{past ? " · Vested" : ""}</div></div>
-    </div>);
-  })}</div>);
+// ─── VESTING HELPERS ─────────────────────────────────────────────────────────
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const target = new Date(dateStr + "T00:00:00");
+  return Math.ceil((target - now) / 86400000);
+}
+function relTime(dateStr) {
+  const d = daysUntil(dateStr);
+  if (d === null) return "No date";
+  if (d < 0) return `Vested ${Math.abs(d)} days ago`;
+  if (d === 0) return "Vesting today!";
+  if (d === 1) return "Vesting tomorrow";
+  if (d <= 30) return `Vesting in ${d} days`;
+  if (d <= 365) return `Vesting in ${Math.round(d / 30)} months`;
+  return `Vesting in ${(d / 365).toFixed(1)} years`;
+}
+function vestStatus(dateStr) {
+  const d = daysUntil(dateStr);
+  if (d === null) return "unknown";
+  if (d < 0) return "vested";
+  if (d <= 30) return "soon";
+  if (d <= 90) return "upcoming";
+  return "future";
+}
+
+const GLOSSARY = [
+  { term: "Vesting", def: "When granted equity becomes legally yours. Until shares vest, they're promised but you can't sell or transfer them." },
+  { term: "RSU", def: "Restricted Stock Unit — shares granted to you at no cost that vest over time. When they vest, you receive actual shares. Vesting triggers a taxable benefit." },
+  { term: "Stock Option", def: "The right to buy shares at a fixed price (the strike/exercise price). Only valuable if the market price exceeds your strike price. You choose when to exercise." },
+  { term: "Cliff", def: "A waiting period before any shares vest. Common: 1-year cliff means nothing vests for the first year, then a chunk vests at once." },
+  { term: "Exercise", def: "Using your stock options to buy shares at the strike price. You pay cash and receive shares. The difference between market price and strike price may be taxable." },
+  { term: "Grant Date", def: "When the equity was officially promised to you. Vesting typically starts from this date." },
+  { term: "Strike / Exercise Price", def: "The price you pay per share when exercising options. RSUs have no strike price — they're free when vested." },
+  { term: "Tax on Vesting (RSUs)", def: "In Canada, when RSUs vest, the full market value is taxed as employment income. Plan for a tax bill equal to ~30-50% of the vested value depending on your province and bracket." },
+  { term: "Tax on Exercise (Options)", def: "When you exercise stock options, the difference between the market price and your strike price is a taxable benefit. If the company is a CCPC, you may defer tax until you sell." },
+];
+
+// ─── VESTING GLOSSARY ────────────────────────────────────────────────────────
+function VestGlossary({ dark }) {
+  const [open, setOpen] = useState(false);
+  const t = T(dark);
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <button onClick={() => setOpen(!open)} style={{ background: "none", border: `1px solid ${t.bd}`, borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: t.fg, fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+        <HelpCircle size={13} style={{ color: t.acc }} /> {open ? "Hide" : "Show"} Glossary <ChevronDown size={13} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+      </button>
+      {open && (
+        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 8 }}>
+          {GLOSSARY.map(g => (
+            <div key={g.term} style={{ ...t.card, padding: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: t.fg2, marginBottom: 3 }}>{g.term}</div>
+              <div style={{ fontSize: 11, color: t.mt, lineHeight: 1.5 }}>{g.def}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── VESTING PROGRESS BAR ────────────────────────────────────────────────────
+function VestProgress({ grant, dark }) {
+  const t = T(dark);
+  const total = grant.totalAmount || 0;
+  const vested = grant.vestedAmount || 0;
+  const pct = total > 0 ? (vested / total) * 100 : 0;
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: t.mt, marginBottom: 3 }}>
+        <span>{N(vested)} of {N(total)} shares vested</span>
+        <span style={{ fontWeight: 600 }}>{pct.toFixed(0)}%</span>
+      </div>
+      <div style={{ height: 6, borderRadius: 3, background: dark ? "#272748" : "#e5e7eb", overflow: "hidden" }}>
+        <div style={{ height: "100%", borderRadius: 3, background: pct >= 100 ? t.gn : t.acc, width: `${Math.min(pct, 100)}%`, transition: "width .3s" }} />
+      </div>
+    </div>
+  );
 }
 
 // ─── EXCEL PARSER ────────────────────────────────────────────────────────────
@@ -335,7 +402,28 @@ export default function App({ session }) {
     return Object.entries(m).filter(([, v]) => v.value > 0).sort((a, b) => b[1].value - a[1].value).map(([l, v]) => ({ label: l, value: v.value, items: v.items }));
   }, [eS, eO]);
 
-  const vestE = useMemo(() => { const ev = []; (data.options || []).forEach(o => { (o.vestingDates || []).forEach(v => { ev.push({ date: v.date, company: o.company, amount: v.amount, currentValue: v.amount * gp(o.gfTicker) }); }); }); return ev.sort((a, b) => (a.date || "").localeCompare(b.date || "")); }, [data.options, gp]);
+  // Vesting: merge from options.vestingDates (legacy) + standalone vestingEvents
+  const vestE = useMemo(() => {
+    const ev = [];
+    // From options with vestingDates
+    (data.options || []).forEach(o => { (o.vestingDates || []).forEach(v => { ev.push({ id: `${o.id}-${v.date}`, date: v.date, company: o.company, gfTicker: o.gfTicker, type: o.type, amount: v.amount, exercisePrice: o.exercisePrice || 0, currentValue: v.amount * gp(o.gfTicker), source: "option", sourceId: o.id }); }); });
+    // From standalone vestingEvents
+    (data.vestingEvents || []).forEach(v => { ev.push({ ...v, currentValue: (v.amount || 0) * gp(v.gfTicker), source: "standalone" }); });
+    return ev.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  }, [data.options, data.vestingEvents, gp]);
+
+  // Group vesting by grant (company + type) for progress bars
+  const vestGrants = useMemo(() => {
+    const m = {};
+    vestE.forEach(e => {
+      const key = `${e.company}-${e.type || "RSU"}`;
+      if (!m[key]) m[key] = { company: e.company, type: e.type || "RSU", gfTicker: e.gfTicker, exercisePrice: e.exercisePrice || 0, totalAmount: 0, vestedAmount: 0, events: [], currentPrice: gp(e.gfTicker) };
+      m[key].totalAmount += e.amount || 0;
+      if (vestStatus(e.date) === "vested") m[key].vestedAmount += e.amount || 0;
+      m[key].events.push(e);
+    });
+    return Object.values(m);
+  }, [vestE, gp]);
 
   const taxByYear = useMemo(() => {
     const m = {};
@@ -638,8 +726,128 @@ export default function App({ session }) {
 
         {/* ═══ VESTING ═══ */}
         {tab === "vesting" && (<>
-          <div style={_.grid}><Cd dk={dk} icon={Calendar} title="Upcoming Vesting" value={$(vestE.filter(e => e.date >= new Date().toISOString().split("T")[0]).reduce((s, e) => s + e.currentValue, 0))} sub={`${vestE.filter(e => e.date >= new Date().toISOString().split("T")[0]).length} events`} /></div>
-          <div style={_.panel}><SectionHeader title="Vesting Schedule" icon={Calendar} /><Vesting events={vestE} dark={dk} /></div>
+          {/* Explainer */}
+          <div style={{ ..._.panel, display: "flex", gap: 14, alignItems: "flex-start" }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: dk ? "#1c1c34" : "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Info size={18} style={{ color: t.acc }} /></div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: t.fg2, marginBottom: 4 }}>How Vesting Works</div>
+              <div style={{ fontSize: 12, color: t.mt, lineHeight: 1.6 }}>
+                Vesting is when your equity grants become yours to keep. RSUs and stock options typically vest on a schedule — once they vest, you own the shares (RSUs) or can exercise your right to buy them (options). 
+                <strong style={{ color: t.fg }}> Vesting events may trigger taxes</strong> — RSUs are taxed as employment income when they vest, and exercising options creates a taxable benefit equal to the market price minus your strike price.
+              </div>
+            </div>
+          </div>
+
+          {/* Summary cards */}
+          <div style={_.grid}>
+            <Cd dk={dk} icon={Calendar} title="Upcoming Vesting" value={$(vestE.filter(e => vestStatus(e.date) !== "vested").reduce((s, e) => s + e.currentValue, 0))} sub={`${vestE.filter(e => vestStatus(e.date) !== "vested").length} events`} />
+            <Cd dk={dk} icon={CheckCircle2} title="Already Vested" value={$(vestE.filter(e => vestStatus(e.date) === "vested").reduce((s, e) => s + e.currentValue, 0))} sub={`${vestE.filter(e => vestStatus(e.date) === "vested").length} events`} />
+            <Cd dk={dk} icon={AlertTriangle} title="Vesting Within 90 Days" value={$(vestE.filter(e => { const s = vestStatus(e.date); return s === "soon" || s === "upcoming"; }).reduce((s, e) => s + e.currentValue, 0))} sub="Plan for potential tax event" color={vestE.some(e => vestStatus(e.date) === "soon") ? (dk ? "#fbbf24" : "#d97706") : undefined} />
+          </div>
+
+          {/* Tax alerts for upcoming vests */}
+          {vestE.filter(e => vestStatus(e.date) === "soon").length > 0 && (
+            <div style={{ ..._.panel, background: dk ? "rgba(251,191,36,0.08)" : "#fffbeb", border: `1px solid ${dk ? "#78350f" : "#fde68a"}`, display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <AlertTriangle size={18} style={{ color: dk ? "#fbbf24" : "#d97706", flexShrink: 0, marginTop: 2 }} />
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: dk ? "#fbbf24" : "#92400e", marginBottom: 4 }}>Vesting events coming soon</div>
+                {vestE.filter(e => vestStatus(e.date) === "soon").map((e, i) => (
+                  <div key={i} style={{ fontSize: 12, color: dk ? "#fcd34d" : "#78350f", marginBottom: 2 }}>
+                    <strong>{e.company}</strong> — {N(e.amount)} {e.type || "shares"} {relTime(e.date)} (worth {$(e.currentValue)} today)
+                    {e.type === "RSU" && <span> → taxed as income at vest</span>}
+                    {e.type === "Option" && e.exercisePrice > 0 && <span> → taxable benefit of {$(Math.max(0, gp(e.gfTicker) - e.exercisePrice) * e.amount)} if exercised</span>}
+                  </div>
+                ))}
+                <div style={{ fontSize: 11, color: dk ? "#a16207" : "#92400e", marginTop: 6 }}>Consider setting aside cash for the tax bill. Use the Tax tab calculator to estimate.</div>
+              </div>
+            </div>
+          )}
+
+          {/* Glossary */}
+          <VestGlossary dark={dk} />
+
+          {/* Grant progress bars */}
+          {vestGrants.length > 0 && (
+            <div style={_.panel}>
+              <SectionHeader title="Grant Progress" icon={BarChart3} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
+                {vestGrants.map((g, i) => (
+                  <div key={i} style={{ ...t.card, padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: t.fg2 }}>{g.company}</div>
+                      <span style={_.badge(g.type === "RSU" ? (dk ? "#1e3a5f" : "#dbeafe") : (dk ? "#2d2d4a" : "#f3f4f6"), g.type === "RSU" ? (dk ? "#93c5fd" : "#2563eb") : t.fg)}>{g.type}</span>
+                    </div>
+                    {g.exercisePrice > 0 && <div style={{ fontSize: 11, color: t.mt }}>Strike: {$(g.exercisePrice, "CAD", 3)} · Market: {$(g.currentPrice, "CAD", 3)}</div>}
+                    <VestProgress grant={g} dark={dk} />
+                    <div style={{ fontSize: 11, color: t.mt, marginTop: 4 }}>
+                      Current value: <strong style={{ color: t.fg }}>{$((g.type === "RSU" ? g.currentPrice : Math.max(0, g.currentPrice - g.exercisePrice)) * g.vestedAmount)}</strong> vested
+                      {g.totalAmount > g.vestedAmount && <> · <strong style={{ color: t.acc }}>{$((g.type === "RSU" ? g.currentPrice : Math.max(0, g.currentPrice - g.exercisePrice)) * (g.totalAmount - g.vestedAmount))}</strong> unvested</>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Editable vesting events table */}
+          <div style={_.panel}>
+            <SectionHeader title="Vesting Schedule" icon={Calendar} section="vestingEvents">
+              {isEd("vestingEvents") && <button style={_.btn(t.acc, "#fff")} onClick={() => addItem("vestingEvents", { company: "", gfTicker: "", type: "RSU", amount: 0, exercisePrice: 0, date: "", notes: "" })}><Plus size={12} /> Add Event</button>}
+            </SectionHeader>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>
+                  {["Status", "Date", "Company", "Ticker", "Type", "Shares", "Strike", "Value", ""].map(h => <th key={h} style={_.th}>{h}</th>)}
+                  {isEd("vestingEvents") && <th style={_.th}></th>}
+                </tr></thead>
+                <tbody>
+                  {/* Show all events: from options (read-only) + standalone (editable) */}
+                  {vestE.map((e, i) => {
+                    const st = vestStatus(e.date);
+                    const d = daysUntil(e.date);
+                    const editable = e.source === "standalone" && isEd("vestingEvents");
+                    const statusColors = {
+                      vested: { bg: dk ? "#064e3b" : "#d1fae5", fg: dk ? "#6ee7b7" : "#047857", icon: CheckCircle2, label: "Vested" },
+                      soon: { bg: dk ? "#78350f33" : "#fef3c7", fg: dk ? "#fbbf24" : "#d97706", icon: AlertTriangle, label: relTime(e.date) },
+                      upcoming: { bg: dk ? "#1e3a5f" : "#dbeafe", fg: dk ? "#93c5fd" : "#2563eb", icon: Clock, label: relTime(e.date) },
+                      future: { bg: dk ? "#2d2d4a" : "#f3f4f6", fg: t.mt, icon: Clock, label: relTime(e.date) },
+                      unknown: { bg: dk ? "#2d2d4a" : "#f3f4f6", fg: t.mt, icon: HelpCircle, label: "No date" },
+                    };
+                    const sc = statusColors[st] || statusColors.unknown;
+                    const StIcon = sc.icon;
+                    return (
+                      <tr key={e.id || i} style={{ background: editable ? t.editBg : "transparent", opacity: st === "vested" ? 0.5 : 1 }}>
+                        <td style={_.td}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <StIcon size={13} style={{ color: sc.fg }} />
+                            <span style={{ ..._.badge(sc.bg, sc.fg) }}>{sc.label}</span>
+                          </div>
+                        </td>
+                        <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{editable ? <EC editing value={e.date} onChange={v => updData("vestingEvents", e.id, "date", v)} /> : fmtDate(e.date)}</td>
+                        <td style={{ ..._.td, fontWeight: 600 }}>{editable ? <EC editing value={e.company} onChange={v => updData("vestingEvents", e.id, "company", v)} /> : e.company}</td>
+                        <td style={{ ..._.td, fontSize: 11 }}>{editable ? <EC editing value={e.gfTicker} onChange={v => updData("vestingEvents", e.id, "gfTicker", v)} /> : (e.gfTicker || "—")}</td>
+                        <td style={_.td}>{editable ? <select style={{ ..._.sel, height: 28, fontSize: 11 }} value={e.type || "RSU"} onChange={ev => updData("vestingEvents", e.id, "type", ev.target.value)}><option>RSU</option><option>Option</option></select> : <span style={_.badge(e.type === "RSU" ? (dk ? "#1e3a5f" : "#dbeafe") : (dk ? "#2d2d4a" : "#f3f4f6"), e.type === "RSU" ? (dk ? "#93c5fd" : "#2563eb") : t.fg)}>{e.type || "RSU"}</span>}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{editable ? <EC editing value={e.amount} type="number" onChange={v => updData("vestingEvents", e.id, "amount", v)} /> : N(e.amount)}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{editable ? <EC editing value={e.exercisePrice} type="number" step="0.001" onChange={v => updData("vestingEvents", e.id, "exercisePrice", v)} /> : (e.exercisePrice > 0 ? $(e.exercisePrice, "CAD", 3) : "—")}</td>
+                        <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{$(e.currentValue)}</td>
+                        <td style={{ ..._.td, fontSize: 10, color: t.mt }}>
+                          {st !== "vested" && e.type === "RSU" && "Taxed as income at vest"}
+                          {st !== "vested" && e.type === "Option" && e.exercisePrice > 0 && `Benefit: ${$(Math.max(0, gp(e.gfTicker) - e.exercisePrice) * e.amount)}`}
+                          {st === "vested" && e.source !== "standalone" && "From options tab"}
+                        </td>
+                        {isEd("vestingEvents") && <td style={_.td}>{e.source === "standalone" ? <button onClick={() => delItem("vestingEvents", e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: t.rd }}><Trash2 size={13} /></button> : <span style={{ fontSize: 10, color: t.mt }}>linked</span>}</td>}
+                      </tr>
+                    );
+                  })}
+                  {vestE.length === 0 && (
+                    <tr><td colSpan={10} style={{ padding: 0, border: "none" }}>
+                      <Empty icon={Calendar} title="No vesting events yet" sub="Add vesting events to track when your equity grants become yours. You'll get alerts when events are approaching and reminders about tax implications." dark={dk} onAdd={() => { addItem("vestingEvents", { company: "", gfTicker: "", type: "RSU", amount: 0, exercisePrice: 0, date: "", notes: "" }); toggleEd("vestingEvents"); }} />
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </>)}
 
         {/* ═══ NET WORTH ═══ */}
