@@ -26,7 +26,7 @@ function convertToYahoo(gfTicker) {
     case "NYSEARCA": case "NYSE": case "NASDAQ": return sym;
     default: return `${sym}.V`;
   }
-}
+} 
 
 // ─── default positions from your spreadsheet ─────────────────────────────────
 const DEFAULT_DATA = {
