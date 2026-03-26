@@ -535,38 +535,44 @@ export default function App({ session }) {
   const allTk = useMemo(() => { const s = new Set(); [...(data.options || []), ...(data.stocks || []), ...(data.promissoryNotes || [])].forEach(x => { const tk = normalizeTickerInput(x.gfTicker); if (tk) s.add(tk); }); return [...s]; }, [data]);
 
   const fetchP = useCallback(async () => {
-  if (!allTk.length) {
-    setPSt("idle");
-    return;
-  }
-
-  setPSt("loading");
-
-  try {
-    const mapped = allTk.map(tk => y2c(tk)).filter(Boolean);
-    const r = await fetch(`/api/prices?tickers=${encodeURIComponent(mapped.join(","))}`, { cache: "no-store" });
-    if (!r.ok) throw new Error("price fetch failed");
-
-    const d = await r.json();
-    const next = { ...prices };
-    let ok = 0;
-
-    for (const q of (d.quotes || [])) {
-      const returnedTk = String(q.requestedTicker || q.symbol || "").toUpperCase();
-      const matchOriginal = allTk.find(tk => y2c(tk) === returnedTk);
-
-      if (matchOriginal && Number.isFinite(Number(q.price))) {
-        next[matchOriginal.toUpperCase()] = Number(q.price);
-        ok++;
-      }
+    if (!allTk.length) {
+      setPSt("idle");
+      return;
     }
 
-    setPrices(next);
-    setPSt(ok > 0 ? "done" : "error");
-  } catch {
-    setPSt("error");
-  }
-}, [allTk, prices]);
+    setPSt("loading");
+
+    try {
+      const r = await fetch(
+        `/api/prices?tickers=${encodeURIComponent(allTk.join(","))}`,
+        { cache: "no-store" }
+      );
+      if (!r.ok) throw new Error("price fetch failed");
+
+      const d = await r.json();
+      let ok = 0;
+
+      setPrices(prev => {
+        const next = { ...prev };
+
+        for (const q of (d.quotes || [])) {
+          const returnedTk = normalizeTickerInput(q.requestedTicker || q.symbol || "");
+          const price = Number(q.price);
+
+          if (returnedTk && Number.isFinite(price)) {
+            next[returnedTk] = price;
+            ok++;
+          }
+        }
+
+        return next;
+      });
+
+      setPSt(ok > 0 ? "done" : "error");
+    } catch {
+      setPSt("error");
+    }
+  }, [allTk]);
 
   useEffect(() => {
     if (!dbLoaded || !allTk.length) return;
@@ -1095,4 +1101,3 @@ function Cd({ dk, icon: Icon, title, value, sub, color }) {
     <div><div style={{ color: t.mt, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>{title}</div><div style={{ fontSize: 18, fontWeight: 700, color: color || t.fg2, fontVariantNumeric: "tabular-nums" }}>{value}</div>{sub && <div style={{ marginTop: 1, fontSize: 11, color: color || t.mt, fontWeight: 600 }}>{sub}</div>}</div>
   </div>);
 }
-
