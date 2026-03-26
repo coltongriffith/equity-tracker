@@ -33,7 +33,19 @@ function calcTax(income, province) {
   return { fed, prov: pr, total: fed + pr };
 }
 
-function y2c(gf) { if (!gf) return null; const [ex, sym] = gf.split(":"); if (!sym) return null; const s = sym.toUpperCase().replace(".H", "-H"); return ex.toUpperCase() === "CVE" ? s + ".V" : ex.toUpperCase() === "CNSX" ? s + ".CN" : ex.toUpperCase() === "TSE" ? s + ".TO" : s; }
+function y2c(gf) {
+  if (!gf) return null;
+  const raw = String(gf).trim().toUpperCase();
+  if (!raw) return null;
+  if ((/^[A-Z0-9.\-]+$/).test(raw) && !raw.includes(":")) return raw.replace(".H", "-H");
+  const [ex, sym] = raw.split(":");
+  if (!sym) return raw.replace(".H", "-H");
+  const s = sym.replace(".H", "-H");
+  if (ex === "CVE" || ex === "TSXV") return s + ".V";
+  if (ex === "CNSX" || ex === "CSE") return s + ".CN";
+  if (ex === "TSE" || ex === "TSX") return s + ".TO";
+  return s;
+}
 
 // ─── DEFAULT DATA (empty for new users) ──────────────────────────────────────
 const DD = {
@@ -70,6 +82,93 @@ function T(dk) {
 function EC({ value, onChange, editing, type = "text", step, style: sx }) {
   if (!editing) return <span style={sx}>{typeof value === "number" && type === "number" ? value : value || "—"}</span>;
   return <input style={{ height: 28, borderRadius: 6, border: `1px solid #6366f1`, background: "transparent", color: "inherit", padding: "0 6px", fontSize: 12, width: "100%", outline: "none", fontVariantNumeric: "tabular-nums", ...sx }} type={type} step={step} value={value ?? ""} onChange={e => onChange(type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)} />;
+}
+
+function TickerInput({ editing, value, companyValue, onChange, onPick, dark }) {
+  const t = T(dark);
+  const [q, setQ] = useState(value || "");
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState([]);
+  const boxRef = useRef(null);
+
+  useEffect(() => { setQ(value || ""); }, [value]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const term = String(q || "").trim();
+    if (term.length < 2) { setResults([]); setLoading(false); return; }
+    const ctl = new AbortController();
+    setLoading(true);
+    const id = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/ticker-search?q=${encodeURIComponent(term)}`, { signal: ctl.signal });
+        const d = await r.json();
+        setResults(Array.isArray(d?.results) ? d.results : []);
+        setOpen(true);
+      } catch (e) {
+        if (e?.name !== "AbortError") setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 250);
+    return () => { clearTimeout(id); ctl.abort(); };
+  }, [q, editing]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const onDoc = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [editing]);
+
+  if (!editing) return <span>{value || "—"}</span>;
+
+  return (
+    <div ref={boxRef} style={{ position: "relative", minWidth: 180 }}>
+      <input
+        style={{ height: 28, borderRadius: 6, border: `1px solid #6366f1`, background: "transparent", color: "inherit", padding: "0 6px", fontSize: 12, width: "100%", outline: "none", fontVariantNumeric: "tabular-nums" }}
+        value={q}
+        placeholder="Type company or ticker"
+        onFocus={() => { if (results.length) setOpen(true); }}
+        onChange={e => {
+          const v = e.target.value.toUpperCase();
+          setQ(v);
+          onChange(v);
+          setOpen(true);
+        }}
+      />
+      {(open && (loading || results.length > 0 || (q || "").trim().length >= 2)) && (
+        <div style={{ position: "absolute", top: 31, left: 0, right: 0, zIndex: 40, background: t.s, border: `1px solid ${t.bd}`, borderRadius: 8, boxShadow: "0 10px 30px rgba(0,0,0,0.18)", overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
+          {loading && <div style={{ padding: 10, fontSize: 11, color: t.mt }}>Searching…</div>}
+          {!loading && results.length === 0 && <div style={{ padding: 10, fontSize: 11, color: t.mt }}>No matches</div>}
+          {!loading && results.map((r, i) => (
+            <button
+              key={`${r.symbol}-${i}`}
+              type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => {
+                onPick(r);
+                setQ(r.symbol || "");
+                setOpen(false);
+              }}
+              style={{ width: "100%", textAlign: "left", padding: "10px 12px", border: "none", borderTop: i ? `1px solid ${t.bd}` : "none", background: "transparent", cursor: "pointer", color: t.fg }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+                <div style={{ fontWeight: 700, fontSize: 12 }}>{r.symbol}</div>
+                <div style={{ fontSize: 10, color: t.mt }}>{r.exchange || ""}</div>
+              </div>
+              <div style={{ fontSize: 11, marginTop: 2, color: t.fg }}>{r.name || companyValue || "Unnamed company"}</div>
+              <div style={{ fontSize: 10, marginTop: 3, color: t.mt, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span>{r.typeDisp || r.type || "Equity"}</span>
+                <span>{r.currency || ""}{r.price != null ? ` · ${r.price}` : ""}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── PIE CHART WITH CLICK DETAIL ─────────────────────────────────────────────
@@ -402,26 +501,60 @@ export default function App({ session }) {
   const updData = useCallback((section, id, field, val) => {
     setData(p => ({ ...p, [section]: (p[section] || []).map(x => x.id === id ? { ...x, [field]: val } : x) }));
   }, []);
+  const updRow = useCallback((section, id, patch) => {
+    setData(p => ({ ...p, [section]: (p[section] || []).map(x => x.id === id ? { ...x, ...patch } : x) }));
+  }, []);
   const addItem = useCallback((section, item) => setData(p => ({ ...p, [section]: [...(p[section] || []), { id: crypto.randomUUID(), ...item }] })), []);
   const delItem = useCallback((section, id) => setData(p => ({ ...p, [section]: (p[section] || []).filter(x => x.id !== id) })), []);
 
   const allTk = useMemo(() => { const s = new Set(); [...(data.options || []), ...(data.stocks || []), ...(data.promissoryNotes || [])].forEach(x => x.gfTicker && s.add(x.gfTicker.toUpperCase())); return [...s]; }, [data]);
 
   const fetchP = useCallback(async () => {
-    setPSt("loading"); const u = { ...prices }; let ok = 0;
-    for (const tk of allTk) {
-      try {
-        const yt = y2c(tk); if (!yt) continue;
-        const r = await fetch(`/api/price?ticker=${encodeURIComponent(yt)}`);
-        if (!r.ok) continue;
-        const d = await r.json();
-        if (d.price) { u[tk] = d.price; ok++; }
-      } catch {}
+    if (!allTk.length) { setPSt("idle"); return; }
+    setPSt("loading");
+    try {
+      const mapped = allTk.map(tk => y2c(tk)).filter(Boolean);
+      const r = await fetch(`/api/prices?tickers=${encodeURIComponent(mapped.join(","))}`, { cache: "no-store" });
+      if (!r.ok) throw new Error("price fetch failed");
+      const d = await r.json();
+      const next = { ...prices };
+      let ok = 0;
+      for (const q of (d.quotes || [])) {
+        const reqTk = String(q.requestedTicker || "").toUpperCase();
+        const matchOriginal = allTk.find(tk => y2c(tk) === reqTk);
+        if (matchOriginal && Number.isFinite(Number(q.price))) {
+          next[matchOriginal.toUpperCase()] = Number(q.price);
+          ok++;
+        }
+      }
+      setPrices(next);
+      setPSt(ok > 0 ? "done" : "error");
+    } catch {
+      setPSt("error");
     }
-    setPrices(u); setPSt(ok > 0 ? "done" : "error");
   }, [allTk, prices]);
 
-  useEffect(() => { fetchP(); }, []);
+  useEffect(() => {
+    if (!dbLoaded || !allTk.length) return;
+    fetchP();
+  }, [dbLoaded, allTk, fetchP]);
+
+  useEffect(() => {
+    if (!dbLoaded || !allTk.length) return;
+    const onVisible = () => { if (document.visibilityState === "visible") fetchP(); };
+    const onFocus = () => fetchP();
+    const onOnline = () => fetchP();
+    const id = setInterval(() => { if (document.visibilityState === "visible") fetchP(); }, 60000);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onOnline);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [dbLoaded, allTk, fetchP]);
 
   const gp = useCallback(tk => !tk ? 0 : (prices[tk.toUpperCase()] || FP[tk.toUpperCase()] || 0), [prices]);
 
@@ -600,7 +733,7 @@ export default function App({ session }) {
                   const al = totals.port > 0 ? s.totalValue / totals.port * 100 : 0, ed = isEd("stocks");
                   return (<tr key={s.id} style={{ background: ed ? t.editBg : "transparent" }}>
                     <td style={_.td}><EC editing={ed} value={s.company} onChange={v => updData("stocks", s.id, "company", v)} style={{ fontWeight: 600 }} /></td>
-                    <td style={{ ..._.td, fontSize: 11 }}><EC editing={ed} value={s.gfTicker} onChange={v => updData("stocks", s.id, "gfTicker", v)} /></td>
+                    <td style={{ ..._.td, fontSize: 11 }}><TickerInput editing={ed} dark={dk} value={s.gfTicker} companyValue={s.company} onChange={v => updData("stocks", s.id, "gfTicker", v)} onPick={r => updRow("stocks", s.id, { gfTicker: r.symbol || "", company: s.company && s.company !== "New Position" ? s.company : (r.name || s.company || "") })} /></td>
                     <td style={{ ..._.td, ..._.mn }}><EC editing={ed} value={s.shares} type="number" onChange={v => updData("stocks", s.id, "shares", v)} /></td>
                     <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={s.costBasis} type="number" step="0.0001" onChange={v => updData("stocks", s.id, "costBasis", v)} /> : $(s.costBasis, "CAD", 3)}</td>
                     <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{$(s.price, "CAD", 3)}</td>
@@ -630,7 +763,7 @@ export default function App({ session }) {
                 <tr key={o.id} style={{ opacity: exp ? 0.35 : 1, background: ed ? t.editBg : "transparent" }}>
                   <td style={_.td}><EC editing={ed} value={o.company} onChange={v => updData("options", o.id, "company", v)} style={{ fontWeight: 600 }} />{!ed && o.notes && <div style={{ fontSize: 10, color: t.mt }}>{o.notes}</div>}</td>
                   <td style={_.td}>{ed ? <select style={{ ..._.sel, height: 28, fontSize: 11 }} value={o.type} onChange={e => updData("options", o.id, "type", e.target.value)}><option>Option</option><option>RSU</option></select> : <span style={_.badge(o.type === "RSU" ? (dk ? "#1e3a5f" : "#dbeafe") : (dk ? "#2d2d4a" : "#f3f4f6"), o.type === "RSU" ? (dk ? "#93c5fd" : "#2563eb") : t.fg)}>{o.type}</span>}</td>
-                  <td style={{ ..._.td, fontSize: 11 }}><EC editing={ed} value={o.gfTicker} onChange={v => updData("options", o.id, "gfTicker", v)} /></td>
+                  <td style={{ ..._.td, fontSize: 11 }}><TickerInput editing={ed} dark={dk} value={o.gfTicker} companyValue={o.company} onChange={v => updData("options", o.id, "gfTicker", v)} onPick={r => updRow("options", o.id, { gfTicker: r.symbol || "", company: o.company && o.company !== "New Grant" ? o.company : (r.name || o.company || "") })} /></td>
                   <td style={{ ..._.td, ..._.mn }}><EC editing={ed} value={o.amount} type="number" onChange={v => updData("options", o.id, "amount", v)} /></td>
                   <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={o.exercisePrice} type="number" step="0.001" onChange={v => updData("options", o.id, "exercisePrice", v)} /> : o.type === "RSU" ? "—" : $(o.exercisePrice, "CAD", 3)}</td>
                   <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{$(o.price, "CAD", 3)}</td>
@@ -654,7 +787,7 @@ export default function App({ session }) {
               <tbody>{fsort(eN, ["company","gfTicker"]).map(n => { const ed = isEd("promissoryNotes"); return (
                 <tr key={n.id} style={{ background: ed ? t.editBg : "transparent" }}>
                   <td style={{ ..._.td, fontWeight: 600 }}><EC editing={ed} value={n.company} onChange={v => updData("promissoryNotes", n.id, "company", v)} /></td>
-                  <td style={{ ..._.td, fontSize: 11 }}><EC editing={ed} value={n.gfTicker} onChange={v => updData("promissoryNotes", n.id, "gfTicker", v)} /></td>
+                  <td style={{ ..._.td, fontSize: 11 }}><TickerInput editing={ed} dark={dk} value={n.gfTicker} companyValue={n.company} onChange={v => updData("promissoryNotes", n.id, "gfTicker", v)} onPick={r => updRow("promissoryNotes", n.id, { gfTicker: r.symbol || "", company: n.company && n.company !== "New Note" ? n.company : (r.name || n.company || "") })} /></td>
                   <td style={{ ..._.td, ..._.mn }}><EC editing={ed} value={n.shares} type="number" onChange={v => updData("promissoryNotes", n.id, "shares", v)} /></td>
                   <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={n.costBasis} type="number" step="0.001" onChange={v => updData("promissoryNotes", n.id, "costBasis", v)} /> : $(n.costBasis, "CAD", 3)}</td>
                   <td style={{ ..._.td, ..._.mn }}>{n.price > 0 ? $(n.price, "CAD", 3) : "—"}</td>
