@@ -535,29 +535,38 @@ export default function App({ session }) {
   const allTk = useMemo(() => { const s = new Set(); [...(data.options || []), ...(data.stocks || []), ...(data.promissoryNotes || [])].forEach(x => { const tk = normalizeTickerInput(x.gfTicker); if (tk) s.add(tk); }); return [...s]; }, [data]);
 
   const fetchP = useCallback(async () => {
-    if (!allTk.length) { setPSt("idle"); return; }
-    setPSt("loading");
-    try {
-      const mapped = allTk.map(tk => y2c(tk)).filter(Boolean);
-      const r = await fetch(`/api/prices?tickers=${encodeURIComponent(mapped.join(","))}`, { cache: "no-store" });
-      if (!r.ok) throw new Error("price fetch failed");
-      const d = await r.json();
-      const next = { ...prices };
-      let ok = 0;
-      for (const q of (d.quotes || [])) {
-        const reqTk = String(q.requestedTicker || "").toUpperCase();
-        const matchOriginal = allTk.find(tk => y2c(tk) === reqTk);
-        if (matchOriginal && Number.isFinite(Number(q.price))) {
-          next[matchOriginal.toUpperCase()] = Number(q.price);
-          ok++;
-        }
+  if (!allTk.length) {
+    setPSt("idle");
+    return;
+  }
+
+  setPSt("loading");
+
+  try {
+    const mapped = allTk.map(tk => y2c(tk)).filter(Boolean);
+    const r = await fetch(`/api/prices?tickers=${encodeURIComponent(mapped.join(","))}`, { cache: "no-store" });
+    if (!r.ok) throw new Error("price fetch failed");
+
+    const d = await r.json();
+    const next = { ...prices };
+    let ok = 0;
+
+    for (const q of (d.quotes || [])) {
+      const returnedTk = String(q.requestedTicker || q.symbol || "").toUpperCase();
+      const matchOriginal = allTk.find(tk => y2c(tk) === returnedTk);
+
+      if (matchOriginal && Number.isFinite(Number(q.price))) {
+        next[matchOriginal.toUpperCase()] = Number(q.price);
+        ok++;
       }
-      setPrices(next);
-      setPSt(ok > 0 ? "done" : "error");
-    } catch {
-      setPSt("error");
     }
-  }, [allTk, prices]);
+
+    setPrices(next);
+    setPSt(ok > 0 ? "done" : "error");
+  } catch {
+    setPSt("error");
+  }
+}, [allTk, prices]);
 
   useEffect(() => {
     if (!dbLoaded || !allTk.length) return;
