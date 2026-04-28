@@ -76,6 +76,8 @@ const DD = {
   employers: [],
   incomeEvents: [],
   retirementAccounts: [],
+  taxIncomeEvents: [],
+  taxSetAside: {},
 };
 
 const FP = {};
@@ -698,6 +700,39 @@ export default function App({ session }) {
   // Realized P&L from tax events
   const realizedPnL = useMemo(() => (data.taxEvents || []).reduce((s, e) => s + Number(e.gain || 0), 0), [data.taxEvents]);
 
+  // Auto-calculate tax owed for a gain using current tax settings
+  const autoTaxOwed = useCallback((gain, inclusion = 0.5) => {
+    const prov = data.taxSettings?.province || "BC";
+    const baseInc = Number(data.taxSettings?.annualIncome || 0);
+    const taxable = Math.max(0, Number(gain)) * inclusion;
+    const baseTax = calcTax(baseInc, prov);
+    const withTax = calcTax(baseInc + taxable, prov);
+    return withTax.total - baseTax.total;
+  }, [data.taxSettings]);
+
+  // Combined annual tax summary across capital gains + RSU/employment income events
+  const taxSummary = useMemo(() => {
+    const m = {};
+    (data.taxEvents || []).forEach(e => {
+      const y = String(e.year || "Unknown");
+      if (!m[y]) m[y] = { capGain: 0, capTax: 0, incomeAmt: 0, incomeTax: 0 };
+      m[y].capGain += Number(e.gain || 0);
+      m[y].capTax += Number(e.taxOwed || 0);
+    });
+    (data.taxIncomeEvents || []).forEach(e => {
+      const y = String(e.year || "Unknown");
+      if (!m[y]) m[y] = { capGain: 0, capTax: 0, incomeAmt: 0, incomeTax: 0 };
+      m[y].incomeAmt += Number(e.totalIncome || 0);
+      m[y].incomeTax += Number(e.taxOwed || 0);
+    });
+    return m;
+  }, [data.taxEvents, data.taxIncomeEvents]);
+
+  // Expiry items within 90 days — for portfolio banner
+  const urgentExpiryItems = useMemo(() =>
+    expiryItems.filter(i => i.daysLeft !== null && i.daysLeft >= 0 && i.daysLeft <= 90),
+  [expiryItems]);
+
   // Sort/filter
   const fsort = useCallback((items, keys) => { const q = search.trim().toLowerCase(); let l = items; if (q) l = items.filter(i => keys.some(k => String(i[k] || "").toLowerCase().includes(q))); return [...l].sort((a, b) => { const av = a[sortKey], bv = b[sortKey]; if (typeof av === "string") return sortDir === "asc" ? String(av || "").localeCompare(String(bv || "")) : String(bv || "").localeCompare(String(av || "")); return sortDir === "asc" ? (av || 0) - (bv || 0) : (bv || 0) - (av || 0); }); }, [search, sortKey, sortDir]);
   function ts(k) { if (sortKey === k) setSortDir(p => p === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("desc"); } }
@@ -802,6 +837,28 @@ export default function App({ session }) {
             <Cd dk={dk} icon={DollarSign} title="Realized P&L" value={$(realizedPnL, cur)} sub={`${(data.taxEvents||[]).length} sales logged`} color={gc(realizedPnL, dk)} />
           </div>
 
+          {/* Expiry banner */}
+          {urgentExpiryItems.length > 0 && (
+            <div style={{ ..._.panel, background: urgentExpiryItems.some(i => i.daysLeft <= 30) ? (dk?"rgba(220,38,38,0.10)":"#fef2f2") : (dk?"rgba(251,191,36,0.08)":"#fffbeb"), border: `1px solid ${urgentExpiryItems.some(i => i.daysLeft <= 30) ? (dk?"#7f1d1d":"#fca5a5") : (dk?"#78350f":"#fde68a")}`, marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <Bell size={15} style={{ color: urgentExpiryItems.some(i => i.daysLeft <= 30) ? t.rd : (dk?"#fbbf24":"#d97706"), flexShrink: 0 }} />
+                <div style={{ fontWeight: 700, fontSize: 13, color: urgentExpiryItems.some(i => i.daysLeft <= 30) ? t.rd : (dk?"#fbbf24":"#92400e") }}>
+                  {urgentExpiryItems.filter(i => i.daysLeft <= 30).length > 0 && `⚠ ${urgentExpiryItems.filter(i => i.daysLeft <= 30).length} expiring within 30 days`}
+                  {urgentExpiryItems.filter(i => i.daysLeft <= 30).length === 0 && `${urgentExpiryItems.length} expiring within 90 days`}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: 1 }}>
+                  {urgentExpiryItems.slice(0, 5).map(item => (
+                    <span key={item.id} style={{ ..._.badge(item.daysLeft <= 30 ? t.dns : (dk?"rgba(251,191,36,0.15)":"#fef3c7"), item.daysLeft <= 30 ? t.rd : (dk?"#fbbf24":"#92400e")), fontSize: 11, padding: "3px 8px" }}>
+                      {item.company} · {item.subtype} · {item.daysLeft}d {item.itm ? "· ITM" : "· OTM"}
+                    </span>
+                  ))}
+                  {urgentExpiryItems.length > 5 && <span style={{ fontSize: 11, color: t.mt }}>+{urgentExpiryItems.length - 5} more</span>}
+                </div>
+                <button style={_.btn(t.acc, "#fff")} onClick={() => upd("tab", "expiry")}>View All →</button>
+              </div>
+            </div>
+          )}
+
           <div style={_.panel}>
             <SectionHeader title="Allocation" icon={PieIcon} />
             {allocData.length > 0 ? <PieDetail data={allocData} dark={dk} detail={pieDetail} onSelect={setPieDetail} /> : <Empty icon={PieIcon} title="No allocation data yet" sub="Add stock or option positions to see your portfolio breakdown." dark={dk} />}
@@ -843,10 +900,21 @@ export default function App({ session }) {
             {isEd("options") && <button style={_.btn(t.acc, "#fff")} onClick={() => addItem("options", { company: "New Grant", gfTicker: "", amount: 0, exercisePrice: 0, expiry: null, type: "Option", notes: "" })}><Plus size={12} /> Add</button>}
           </SectionHeader>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 880 }}>
-              <thead><tr>{[["company","Company"],["type","Type"],["gfTicker","Ticker"],["amount","Amount"],["exercisePrice","Strike"],["price","Price"],["intrinsic","Intrinsic"],["value","Value"],["expiry","Expiry"]].map(([k,l]) => <th key={k} style={_.th} onClick={() => ts(k)}>{l}{ar(k)}</th>)}{isEd("options") && <th style={_.th}></th>}</tr></thead>
-              <tbody>{fsort(eO, ["company","gfTicker","type"]).map(o => { const exp = o.expiry && new Date(o.expiry) < new Date(), ed = isEd("options"); return (
-                <tr key={o.id} style={{ opacity: exp ? 0.35 : 1, background: ed ? t.editBg : "transparent" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 960 }}>
+              <thead><tr>{[["company","Company"],["type","Type"],["gfTicker","Ticker"],["amount","Amount"],["exercisePrice","Strike"],["price","Price"],["intrinsic","Intrinsic"],["value","Value"],["expiry","Expiry"],["_days","Days Left"]].map(([k,l]) => <th key={k} style={_.th} onClick={() => k !== "_days" && ts(k)}>{l}{ar(k)}</th>)}{isEd("options") && <th style={_.th}></th>}</tr></thead>
+              <tbody>{[...eO].sort((a,b) => {
+                  const da = a.expiry ? daysUntil(a.expiry) : 9999;
+                  const db = b.expiry ? daysUntil(b.expiry) : 9999;
+                  return (da ?? 9999) - (db ?? 9999);
+                }).map(o => {
+                const exp = o.expiry && new Date(o.expiry) < new Date();
+                const dLeft = o.expiry ? daysUntil(o.expiry) : null;
+                const critical = !exp && dLeft !== null && dLeft <= 30;
+                const warning = !exp && dLeft !== null && dLeft > 30 && dLeft <= 90;
+                const urgBg = exp ? "transparent" : critical ? (dk?"rgba(220,38,38,0.10)":"#fef2f2") : warning ? (dk?"rgba(251,191,36,0.06)":"#fffbeb") : "transparent";
+                const ed = isEd("options");
+                return (
+                <tr key={o.id} style={{ opacity: exp ? 0.35 : 1, background: ed ? t.editBg : urgBg }}>
                   <td style={_.td}><EC editing={ed} value={o.company} onChange={v => updData("options", o.id, "company", v)} style={{ fontWeight: 600 }} />{!ed && o.notes && <div style={{ fontSize: 10, color: t.mt }}>{o.notes}</div>}</td>
                   <td style={_.td}>{ed ? <select style={{ ..._.sel, height: 28, fontSize: 11 }} value={o.type} onChange={e => updData("options", o.id, "type", e.target.value)}><option>Option</option><option>RSU</option></select> : <span style={_.badge(o.type === "RSU" ? (dk ? "#1e3a5f" : "#dbeafe") : (dk ? "#2d2d4a" : "#f3f4f6"), o.type === "RSU" ? (dk ? "#93c5fd" : "#2563eb") : t.fg)}>{o.type}</span>}</td>
                   <td style={{ ..._.td, fontSize: 11 }}><TickerInput editing={ed} dark={dk} value={o.gfTicker} companyValue={o.company} onChange={v => updData("options", o.id, "gfTicker", v)} onPick={r => updRow("options", o.id, { gfTicker: normalizeTickerInput(r.symbol || ""), company: o.company && o.company !== "New Grant" ? o.company : (r.name || o.company || "") })} /></td>
@@ -855,7 +923,12 @@ export default function App({ session }) {
                   <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{$(o.price, "CAD", 3)}</td>
                   <td style={{ ..._.td, ..._.mn, color: o.intrinsic > 0 ? t.gn : t.mt }}>{$(o.intrinsic, "CAD", 3)}</td>
                   <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: gc(o.value, dk) }}>{$(o.value)}</td>
-                  <td style={_.td}>{ed ? <EC editing value={o.expiry || ""} onChange={v => updData("options", o.id, "expiry", v || null)} /> : <>{o.expiry ? fmtDate(o.expiry) : "—"}{exp && <span style={{ ..._.badge(t.dns, t.dnt), marginLeft: 4 }}>Exp</span>}{!exp && o.exercisePrice > 0 && o.price > o.exercisePrice && <span style={{ ..._.badge(dk?"#064e3b":"#d1fae5", dk?"#6ee7b7":"#047857"), marginLeft: 4 }}>ITM</span>}</>}</td>
+                  <td style={_.td}>{ed ? <EC editing value={o.expiry || ""} onChange={v => updData("options", o.id, "expiry", v || null)} /> : <>{o.expiry ? fmtDate(o.expiry) : "—"}{exp && <span style={{ ..._.badge(t.dns, t.dnt), marginLeft: 4 }}>Expired</span>}{!exp && o.exercisePrice > 0 && o.price > o.exercisePrice && <span style={{ ..._.badge(dk?"#064e3b":"#d1fae5", dk?"#6ee7b7":"#047857"), marginLeft: 4 }}>ITM</span>}</>}</td>
+                  <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: exp ? t.mt : critical ? t.rd : warning ? (dk?"#fbbf24":"#d97706") : t.mt }}>
+                    {exp ? "Expired" : dLeft === null ? "No date" : dLeft === 0 ? "Today!" : `${dLeft}d`}
+                    {critical && <div style={{ fontSize: 10, color: t.rd }}>Act soon</div>}
+                    {warning && <div style={{ fontSize: 10, color: dk?"#fbbf24":"#d97706" }}>Watch</div>}
+                  </td>
                   {ed && <td style={_.td}><button onClick={() => delItem("options", o.id)} style={{ background: "none", border: "none", cursor: "pointer", color: t.rd }}><Trash2 size={13} /></button></td>}
                 </tr>); })}</tbody>
             </table>
@@ -948,6 +1021,82 @@ export default function App({ session }) {
             <div style={{ fontSize: 10, color: t.mt, marginTop: 10 }}>Estimate only — uses 50% capital gains inclusion rate. Consult a tax professional.</div>
           </div>
 
+          {/* Annual Tax Summary */}
+          {Object.keys(taxSummary).length > 0 && (
+            <div style={_.panel}>
+              <SectionHeader title="Annual Tax Summary" icon={AlertTriangle} />
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr>
+                    {["Year","Cap Gains","Cap Gains Tax","RSU/Exercise Income","Income Tax","Total Tax Owed","Set Aside","Gap"].map(h => <th key={h} style={_.th}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {Object.entries(taxSummary).sort((a,b) => b[0].localeCompare(a[0])).map(([year, d]) => {
+                      const totalTax = d.capTax + d.incomeTax;
+                      const reserved = Number(data.taxSetAside?.[year]?.reserved || 0);
+                      const gap = reserved - totalTax;
+                      return (
+                        <tr key={year}>
+                          <td style={{ ..._.td, fontWeight: 700, fontSize: 14 }}>{year}</td>
+                          <td style={{ ..._.td, ..._.mn, color: t.gn }}>{$(d.capGain)}</td>
+                          <td style={{ ..._.td, ..._.mn, color: t.rd, fontWeight: 600 }}>{$(d.capTax)}</td>
+                          <td style={{ ..._.td, ..._.mn, color: t.gn }}>{d.incomeAmt > 0 ? $(d.incomeAmt) : "—"}</td>
+                          <td style={{ ..._.td, ..._.mn, color: t.rd, fontWeight: 600 }}>{d.incomeTax > 0 ? $(d.incomeTax) : "—"}</td>
+                          <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: t.rd, fontSize: 13 }}>{$(totalTax)}</td>
+                          <td style={{ ..._.td, ..._.mn }}>
+                            <input style={{ ..._.inp, width: 100, height: 26 }} type="number" value={reserved || ""} placeholder="0"
+                              onChange={e => setData(p => ({ ...p, taxSetAside: { ...(p.taxSetAside||{}), [year]: { reserved: Number(e.target.value) } } }))} />
+                          </td>
+                          <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: gap >= 0 ? t.gn : t.rd }}>
+                            {reserved > 0 ? (gap >= 0 ? `+${$(gap)} surplus` : `${$(gap)} short`) : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: t.mt, marginTop: 8 }}>Set Aside: enter how much cash you've reserved for taxes. Gap shows surplus or shortfall.</div>
+            </div>
+          )}
+
+          {/* RSU & Employment Income Tax Events */}
+          <div style={_.panel}>
+            <SectionHeader title="RSU Vest & Option Exercise Income" icon={Briefcase} section="taxIncomeEvents">
+              <div style={{ fontSize: 11, color: t.mt }}>Taxed as employment income — 100% inclusion</div>
+              {isEd("taxIncomeEvents") && <button style={_.btn(t.acc, "#fff")} onClick={() => { const today = new Date(); updRow; addItem("taxIncomeEvents", { year: today.getFullYear(), date: today.toISOString().split("T")[0], company: "", type: "RSU Vest", shares: 0, priceAtEvent: 0, totalIncome: 0, taxOwed: 0, notes: "" }); }}><Plus size={12} /> Add</button>}
+            </SectionHeader>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+                <thead><tr>
+                  {["Year","Date","Company","Type","Shares","Price at Event","Total Income","Est. Tax (100%)","Notes"].map(h => <th key={h} style={_.th}>{h}</th>)}
+                  {isEd("taxIncomeEvents") && <th style={_.th}></th>}
+                </tr></thead>
+                <tbody>
+                  {[...(data.taxIncomeEvents||[])].sort((a,b) => (b.year||0)-(a.year||0)).map(e => {
+                    const ed = isEd("taxIncomeEvents");
+                    return (
+                      <tr key={e.id} style={{ background: ed ? t.editBg : "transparent" }}>
+                        <td style={{ ..._.td, fontWeight: 600 }}><EC editing={ed} value={e.year} type="number" onChange={v => updData("taxIncomeEvents", e.id, "year", v)} /></td>
+                        <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={e.date||""} type="date" onChange={v => updData("taxIncomeEvents", e.id, "date", v)} /> : fmtDate(e.date)}</td>
+                        <td style={{ ..._.td, fontWeight: 600 }}><EC editing={ed} value={e.company} onChange={v => updData("taxIncomeEvents", e.id, "company", v)} /></td>
+                        <td style={_.td}>{ed ? <select style={{ ..._.sel, height: 28, fontSize: 11 }} value={e.type} onChange={ev => updData("taxIncomeEvents", e.id, "type", ev.target.value)}>{["RSU Vest","Option Exercise"].map(c => <option key={c}>{c}</option>)}</select> : <span style={_.badge(e.type==="RSU Vest"?(dk?"#1e3a5f":"#dbeafe"):(dk?"#2d2d4a":"#f3f4f6"), e.type==="RSU Vest"?(dk?"#93c5fd":"#2563eb"):t.fg)}>{e.type}</span>}</td>
+                        <td style={{ ..._.td, ..._.mn }}><EC editing={ed} value={e.shares} type="number" onChange={v => { const inc = Number(v) * e.priceAtEvent; updRow("taxIncomeEvents", e.id, { shares: v, totalIncome: inc, taxOwed: autoTaxOwed(inc, 1) }); }} /></td>
+                        <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={e.priceAtEvent} type="number" step="0.001" onChange={v => { const inc = e.shares * Number(v); updRow("taxIncomeEvents", e.id, { priceAtEvent: v, totalIncome: inc, taxOwed: autoTaxOwed(inc, 1) }); }} /> : $(e.priceAtEvent, "CAD", 3)}</td>
+                        <td style={{ ..._.td, ..._.mn, fontWeight: 600, color: t.gn }}>{$(e.totalIncome)}</td>
+                        <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: t.rd }}>{$(e.taxOwed)}</td>
+                        <td style={{ ..._.td, color: t.mt, fontSize: 11 }}><EC editing={ed} value={e.notes} onChange={v => updData("taxIncomeEvents", e.id, "notes", v)} /></td>
+                        {ed && <td style={_.td}><button onClick={() => delItem("taxIncomeEvents", e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: t.rd }}><Trash2 size={13} /></button></td>}
+                      </tr>
+                    );
+                  })}
+                  {(data.taxIncomeEvents||[]).length === 0 && <tr><td colSpan={10} style={{ padding: 0, border: "none" }}><Empty icon={Briefcase} title="No RSU or exercise events logged" sub="When RSUs vest or you exercise options, log them here. The spread is taxed as employment income at 100% inclusion — a higher rate than capital gains." dark={dk} onAdd={() => { addItem("taxIncomeEvents", { year: curYear, date: new Date().toISOString().split("T")[0], company: "", type: "RSU Vest", shares: 0, priceAtEvent: 0, totalIncome: 0, taxOwed: 0, notes: "" }); toggleEd("taxIncomeEvents"); }} /></td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 10, color: t.mt, marginTop: 8 }}>RSU vests and option exercise spreads are taxed as employment income in Canada at your full marginal rate (100% inclusion). This is separate from — and higher than — capital gains tax.</div>
+          </div>
+
           {/* Yearly Realized Gains Summary */}
           {Object.keys(taxByYear).length > 0 && (
             <div style={_.panel}>
@@ -975,15 +1124,15 @@ export default function App({ session }) {
             </SectionHeader>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr>{["Year","Ticker","Shares","Sold @","Bought @","Gain","Est. Tax"].map(h => <th key={h} style={_.th}>{h}</th>)}{isEd("taxEvents") && <th style={_.th}></th>}</tr></thead>
-              <tbody>{(data.taxEvents || []).map(e => { const ed = isEd("taxEvents"); return (
+              <tbody>{[...(data.taxEvents || [])].sort((a,b) => (b.year||0)-(a.year||0)).map(e => { const ed = isEd("taxEvents"); return (
                 <tr key={e.id} style={{ background: ed ? t.editBg : "transparent" }}>
                   <td style={{ ..._.td, fontWeight: 600 }}><EC editing={ed} value={e.year} type="number" onChange={v => updData("taxEvents", e.id, "year", v)} /></td>
                   <td style={{ ..._.td, fontWeight: 600 }}><EC editing={ed} value={e.ticker} onChange={v => updData("taxEvents", e.id, "ticker", v?.toUpperCase())} /></td>
-                  <td style={{ ..._.td, ..._.mn }}><EC editing={ed} value={e.sharesSold} type="number" onChange={v => { updData("taxEvents", e.id, "sharesSold", v); const g = v * (e.soldPrice - e.purchasePrice); updData("taxEvents", e.id, "gain", g); }} /></td>
-                  <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={e.soldPrice} type="number" step="0.01" onChange={v => { updData("taxEvents", e.id, "soldPrice", v); updData("taxEvents", e.id, "gain", e.sharesSold * (v - e.purchasePrice)); }} /> : $(e.soldPrice)}</td>
-                  <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={e.purchasePrice} type="number" step="0.01" onChange={v => { updData("taxEvents", e.id, "purchasePrice", v); updData("taxEvents", e.id, "gain", e.sharesSold * (e.soldPrice - v)); }} /> : $(e.purchasePrice)}</td>
+                  <td style={{ ..._.td, ..._.mn }}><EC editing={ed} value={e.sharesSold} type="number" onChange={v => { const g = Number(v) * (e.soldPrice - e.purchasePrice); updRow("taxEvents", e.id, { sharesSold: v, gain: g, taxOwed: autoTaxOwed(g) }); }} /></td>
+                  <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={e.soldPrice} type="number" step="0.01" onChange={v => { const g = e.sharesSold * (Number(v) - e.purchasePrice); updRow("taxEvents", e.id, { soldPrice: v, gain: g, taxOwed: autoTaxOwed(g) }); }} /> : $(e.soldPrice)}</td>
+                  <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={e.purchasePrice} type="number" step="0.01" onChange={v => { const g = e.sharesSold * (e.soldPrice - Number(v)); updRow("taxEvents", e.id, { purchasePrice: v, gain: g, taxOwed: autoTaxOwed(g) }); }} /> : $(e.purchasePrice)}</td>
                   <td style={{ ..._.td, ..._.mn, fontWeight: 600, color: t.gn }}>{$(e.gain)}</td>
-                  <td style={{ ..._.td, ..._.mn, color: t.rd }}>{$(e.taxOwed)}</td>
+                  <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: t.rd }}>{$(e.taxOwed)}<div style={{ fontSize: 10, color: t.mt }}>50% inclusion</div></td>
                   {ed && <td style={_.td}><button onClick={() => delItem("taxEvents", e.id)} style={{ background: "none", border: "none", cursor: "pointer", color: t.rd }}><Trash2 size={13} /></button></td>}
                 </tr>); })}</tbody>
             </table>
@@ -1177,57 +1326,98 @@ export default function App({ session }) {
         </>)}
 
         {/* ═══ EXPIRY DASHBOARD ═══ */}
-        {tab === "expiry" && (<>
-          <div style={_.grid}>
-            <Cd dk={dk} icon={Bell} title="Expiring ≤ 30 Days" value={expiryItems.filter(i => i.daysLeft !== null && i.daysLeft >= 0 && i.daysLeft <= 30).length + " items"} color={expiryItems.some(i => i.daysLeft !== null && i.daysLeft >= 0 && i.daysLeft <= 30) ? t.rd : undefined} />
-            <Cd dk={dk} icon={Clock} title="Expiring ≤ 90 Days" value={expiryItems.filter(i => i.daysLeft !== null && i.daysLeft >= 0 && i.daysLeft <= 90).length + " items"} />
-            <Cd dk={dk} icon={DollarSign} title="ITM Value at Risk" value={$(expiryItems.filter(i => i.itm && i.daysLeft !== null && i.daysLeft >= 0).reduce((s, i) => s + i.value, 0))} sub="In-the-money, expiring" color={t.gn} />
-            <Cd dk={dk} icon={X} title="Already Expired" value={expiryItems.filter(i => i.daysLeft !== null && i.daysLeft < 0).length + " items"} color={t.mt} />
-          </div>
-          <div style={_.panel}>
-            <SectionHeader title="All Expiry Dates" icon={Bell} />
-            {expiryItems.length === 0 ? (
-              <Empty icon={Clock} title="No expiry dates tracked" sub="Add expiry dates to your options and warrants in the Options tab to see them here." dark={dk} />
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
-                  <thead><tr>
-                    {["Urgency","Company","Ticker","Type","Amount","Strike","Price","Value","Expiry","Days Left","Status"].map(h => <th key={h} style={_.th}>{h}</th>)}
-                  </tr></thead>
-                  <tbody>
-                    {expiryItems.map(item => {
-                      const expired = item.daysLeft !== null && item.daysLeft < 0;
-                      const critical = !expired && item.daysLeft !== null && item.daysLeft <= 30;
-                      const warning = !expired && !critical && item.daysLeft !== null && item.daysLeft <= 90;
-                      const urgBg = expired ? (dk?"#1c1c34":"#f3f4f6") : critical ? t.dns : warning ? (dk?"rgba(251,191,36,0.12)":"#fef3c7") : (dk?"#06403020":"#d1fae520");
-                      const urgFg = expired ? t.mt : critical ? t.rd : warning ? (dk?"#fbbf24":"#d97706") : t.gn;
-                      const urgLabel = expired ? "Expired" : critical ? "Critical" : warning ? "Warning" : "OK";
-                      return (
-                        <tr key={item.id} style={{ opacity: expired ? 0.45 : 1 }}>
-                          <td style={_.td}><span style={_.badge(urgBg, urgFg)}>{urgLabel}</span></td>
-                          <td style={{ ..._.td, fontWeight: 600 }}>{item.company}</td>
-                          <td style={{ ..._.td, fontSize: 11 }}>{item.ticker || "—"}</td>
-                          <td style={_.td}><span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.fg)}>{item.subtype}</span></td>
-                          <td style={{ ..._.td, ..._.mn }}>{N(item.amount)}</td>
-                          <td style={{ ..._.td, ..._.mn }}>{item.strike > 0 ? $(item.strike, "CAD", 3) : "—"}</td>
-                          <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{$(item.price, "CAD", 3)}</td>
-                          <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: item.value > 0 ? t.gn : t.mt }}>{$(item.value)}</td>
-                          <td style={{ ..._.td, ..._.mn }}>{fmtDate(item.expiry)}</td>
-                          <td style={{ ..._.td, ..._.mn, fontWeight: 600, color: urgFg }}>
-                            {item.daysLeft === null ? "—" : item.daysLeft < 0 ? `${Math.abs(item.daysLeft)}d ago` : item.daysLeft === 0 ? "Today!" : `${item.daysLeft}d`}
-                          </td>
-                          <td style={_.td}>
-                            {item.itm ? <span style={_.badge(dk?"#064e3b":"#d1fae5", dk?"#6ee7b7":"#047857")}>ITM</span> : <span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.mt)}>OTM</span>}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+        {tab === "expiry" && (() => {
+          const active = expiryItems.filter(i => i.daysLeft !== null && i.daysLeft >= 0);
+          const expired = expiryItems.filter(i => i.daysLeft !== null && i.daysLeft < 0);
+          const itmActive = active.filter(i => i.itm);
+          const otmActive = active.filter(i => !i.itm);
+          const ExpiryRow = ({ item }) => {
+            const critical = item.daysLeft <= 30, warning = item.daysLeft <= 90 && !critical;
+            const urgFg = critical ? t.rd : warning ? (dk?"#fbbf24":"#d97706") : t.gn;
+            const urgLabel = critical ? "Critical" : warning ? "Warning" : "OK";
+            const urgBg = critical ? t.dns : warning ? (dk?"rgba(251,191,36,0.12)":"#fef3c7") : (dk?"#06403020":"#d1fae520");
+            return (
+              <tr key={item.id}>
+                <td style={_.td}><span style={_.badge(urgBg, urgFg)}>{urgLabel}</span></td>
+                <td style={{ ..._.td, fontWeight: 600 }}>{item.company}</td>
+                <td style={{ ..._.td, fontSize: 11 }}>{item.ticker || "—"}</td>
+                <td style={_.td}><span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.fg)}>{item.subtype}</span></td>
+                <td style={{ ..._.td, ..._.mn }}>{N(item.amount)}</td>
+                <td style={{ ..._.td, ..._.mn }}>{item.strike > 0 ? $(item.strike, "CAD", 3) : "—"}</td>
+                <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{$(item.price, "CAD", 3)}</td>
+                <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: item.value > 0 ? t.gn : t.mt }}>{$(item.value)}</td>
+                <td style={{ ..._.td, ..._.mn }}>{fmtDate(item.expiry)}</td>
+                <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: urgFg }}>{item.daysLeft === 0 ? "Today!" : `${item.daysLeft}d`}</td>
+              </tr>
+            );
+          };
+          const cols = ["Urgency","Company","Ticker","Type","Amount","Strike","Price","Value","Expiry","Days Left"];
+          return (<>
+            <div style={_.grid}>
+              <Cd dk={dk} icon={Bell} title="Expiring ≤ 30 Days" value={active.filter(i => i.daysLeft <= 30).length + " items"} color={active.some(i => i.daysLeft <= 30) ? t.rd : undefined} />
+              <Cd dk={dk} icon={DollarSign} title="ITM Value Expiring" value={$(itmActive.reduce((s,i) => s+i.value,0))} sub={`${itmActive.length} in-the-money — act`} color={t.gn} />
+              <Cd dk={dk} icon={Clock} title="OTM Expiring" value={otmActive.length + " items"} sub="Likely worthless — monitor" color={t.mt} />
+              <Cd dk={dk} icon={X} title="Already Expired" value={expired.length + " items"} color={t.mt} />
+            </div>
+
+            {itmActive.length > 0 && (
+              <div style={{ ..._.panel, border: `1px solid ${dk?"#064e3b":"#6ee7b7"}` }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+                  <CheckCircle2 size={16} style={{ color: t.gn }} />
+                  <h2 style={{ ..._.st, margin:0, color: t.gn }}>Action Required — In The Money</h2>
+                  <span style={{ fontSize:11, color:t.mt }}>These have intrinsic value. Decide whether to exercise before expiry.</span>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", minWidth:780 }}>
+                    <thead><tr>{cols.map(h => <th key={h} style={_.th}>{h}</th>)}</tr></thead>
+                    <tbody>{itmActive.map(item => <ExpiryRow key={item.id} item={item} />)}</tbody>
+                  </table>
+                </div>
               </div>
             )}
-          </div>
-        </>)}
+
+            {otmActive.length > 0 && (
+              <div style={_.panel}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+                  <Clock size={16} style={{ color: t.mt }} />
+                  <h2 style={{ ..._.st, margin:0 }}>Out of The Money — Monitor</h2>
+                  <span style={{ fontSize:11, color:t.mt }}>Strike price above current market price. Likely worthless at expiry unless price recovers.</span>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", minWidth:780 }}>
+                    <thead><tr>{cols.map(h => <th key={h} style={_.th}>{h}</th>)}</tr></thead>
+                    <tbody>{otmActive.map(item => <ExpiryRow key={item.id} item={item} />)}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {expiryItems.length === 0 && <div style={_.panel}><Empty icon={Clock} title="No expiry dates tracked" sub="Add expiry dates to your options and warrants in the Options tab to see them here." dark={dk} /></div>}
+
+            {expired.length > 0 && (
+              <div style={{ ..._.panel, opacity: 0.5 }}>
+                <h2 style={_.st}><X size={14} style={{ color: t.mt }} /> Already Expired</h2>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", minWidth:780 }}>
+                    <thead><tr>{["Company","Ticker","Type","Amount","Strike","Price","Expiry","Expired"].map(h => <th key={h} style={_.th}>{h}</th>)}</tr></thead>
+                    <tbody>{expired.map(item => (
+                      <tr key={item.id}>
+                        <td style={{ ..._.td, fontWeight:600 }}>{item.company}</td>
+                        <td style={{ ..._.td, fontSize:11 }}>{item.ticker||"—"}</td>
+                        <td style={_.td}><span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.mt)}>{item.subtype}</span></td>
+                        <td style={{ ..._.td, ..._.mn }}>{N(item.amount)}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{item.strike > 0 ? $(item.strike,"CAD",3) : "—"}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{$(item.price,"CAD",3)}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{fmtDate(item.expiry)}</td>
+                        <td style={{ ..._.td, color:t.mt }}>{Math.abs(item.daysLeft)}d ago</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>);
+        })()}
 
         {/* ═══ EMPLOYMENT & INCOME ═══ */}
         {tab === "employment" && (<>
