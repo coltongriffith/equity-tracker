@@ -705,6 +705,8 @@ export default function App({ session }) {
 
   async function handleUpload(e) { const f = e.target.files?.[0]; if (!f) return; setUploading(true); try { await loadSJ(); const p = parseXL(window.XLSX.read(await f.arrayBuffer(), { type: "array" })); if (!p.stocks.length && !p.options.length) { alert("No positions found."); return; } if (window.confirm(`Found ${p.stocks.length} stocks, ${p.options.length} options, ${p.promissoryNotes.length} notes, ${(p.vestingEvents || []).length} vesting events. Replace?`)) { setData(prev => ({ ...prev, ...p })); setTimeout(fetchP, 500); } } catch (err) { alert("Error: " + err.message); } finally { setUploading(false); e.target.value = ""; } }
 
+  async function handleJsonImport(e) { const f = e.target.files?.[0]; if (!f) return; try { const imported = JSON.parse(await f.text()); if (window.confirm(`Import JSON? This will replace all current data.`)) { setData({ ...DD, ...imported }); setTimeout(fetchP, 500); } } catch (err) { alert("Invalid JSON: " + err.message); } finally { e.target.value = ""; } }
+
   // Tax calculator
   const taxResult = useMemo(() => {
     const gains = Number(taxCalc.gains) || 0;
@@ -778,6 +780,7 @@ export default function App({ session }) {
             <button style={_.btn(dk ? "#272748" : "#e2e4ea", t.fg)} onClick={() => upd("dark", !dk)}>{dk ? <Sun size={14} /> : <Moon size={14} />}</button>
             <button style={_.btn(t.acc, "#fff")} onClick={fetchP}><RefreshCw size={12} /> Prices</button>
             <button style={_.btn(t.s, t.fg, `1px solid ${t.bd}`)} onClick={() => dl(JSON.stringify(data, null, 2), "equity.json", "application/json")}><Download size={12} /> JSON</button>
+            <label style={{ ..._.btn(t.s, t.fg, `1px solid ${t.bd}`), cursor: "pointer" }} title="Import JSON data file"><Upload size={12} /> JSON<input type="file" accept=".json" onChange={handleJsonImport} style={{ display: "none" }} /></label>
             <label style={{ ..._.btn(t.s, t.fg, `1px solid ${t.bd}`), cursor: "pointer" }}><Upload size={12} /> {uploading ? "…" : "Excel"}<input type="file" accept=".xlsx,.xls" onChange={handleUpload} style={{ display: "none" }} /></label>
             {saving && <span style={{ fontSize: 10, color: t.mt }}>Saving…</span>}
             <button style={_.btn(t.s, t.mt, `1px solid ${t.bd}`)} onClick={handleSignOut} title={userEmail}><LogOut size={12} /></button>
