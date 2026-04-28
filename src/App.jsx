@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { TrendingUp, TrendingDown, DollarSign, Home, Landmark, Coins, BarChart3, PieChart as PieIcon, FileText, Calendar, Calculator, Edit3, Check, X, ChevronRight, Briefcase, CreditCard, Car, Package, Building2, Wallet, CircleDot, Plus, Trash2, Upload, Download, Sun, Moon, RefreshCw, LogOut, Clock, AlertTriangle, CheckCircle2, HelpCircle, Info, ChevronDown } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, Home, Landmark, Coins, BarChart3, PieChart as PieIcon, FileText, Calendar, Calculator, Edit3, Check, X, ChevronRight, Briefcase, CreditCard, Car, Package, Building2, Wallet, CircleDot, Plus, Trash2, Upload, Download, Sun, Moon, RefreshCw, LogOut, Clock, AlertTriangle, CheckCircle2, HelpCircle, Info, ChevronDown, User, Shield, Bell } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
@@ -73,6 +73,9 @@ const DD = {
   taxEvents: [],
   vestingEvents: [],
   taxSettings: { province: "BC", annualIncome: 0 },
+  employers: [],
+  incomeEvents: [],
+  retirementAccounts: [],
 };
 
 const FP = {};
@@ -607,9 +610,9 @@ export default function App({ session }) {
 
   const totals = useMemo(() => {
     const sv = eS.reduce((s, x) => s + x.totalValue, 0), ov = eO.reduce((s, x) => s + x.value, 0), nv = eN.reduce((s, x) => s + (x.price > 0 ? x.mv : x.cost), 0);
-    const port = sv + ov + nv, nw = port + aT - lT, sc = eS.reduce((s, x) => s + x.cost, 0), nc = eN.reduce((s, x) => s + x.cost, 0), tc = sc + nc, tp = port - tc;
-    return { sv, ov, nv, port, nw, aT, lT, tc, tp, pp: tc > 0 ? tp / tc * 100 : 0 };
-  }, [eS, eO, eN, aT, lT]);
+    const port = sv + ov + nv, rtT = (data.retirementAccounts || []).reduce((s, r) => s + Number(r.balance || 0), 0), nw = port + aT + rtT - lT, sc = eS.reduce((s, x) => s + x.cost, 0), nc = eN.reduce((s, x) => s + x.cost, 0), tc = sc + nc, tp = port - tc;
+    return { sv, ov, nv, port, rtT, nw, aT, lT, tc, tp, pp: tc > 0 ? tp / tc * 100 : 0 };
+  }, [eS, eO, eN, aT, lT, data.retirementAccounts]);
 
   // NW history
   useEffect(() => { if (!totals.nw) return; const today = new Date().toISOString().split("T")[0]; setNwH(p => { const last = p.at(-1); if (last?.date === today) return p.map(x => x.date === today ? { ...x, value: totals.nw } : x); return [...p, { date: today, value: totals.nw }].slice(-365); }); }, [totals.nw]);
@@ -656,6 +659,45 @@ export default function App({ session }) {
     return m;
   }, [data.taxEvents]);
 
+  // Expiry items — options + warrants sorted by urgency
+  const expiryItems = useMemo(() => {
+    const items = [];
+    eO.forEach(o => {
+      if (o.expiry) {
+        const d = daysUntil(o.expiry);
+        items.push({ id: o.id, type: "Option", subtype: o.type, company: o.company, ticker: o.gfTicker, expiry: o.expiry, daysLeft: d, value: o.value, amount: o.amount, strike: o.exercisePrice, price: o.price, itm: o.type !== "RSU" && o.price > o.exercisePrice });
+      }
+    });
+    eS.forEach(s => {
+      if (s.warrants?.expiry) {
+        const d = daysUntil(s.warrants.expiry);
+        items.push({ id: `${s.id}-w`, type: "Warrant", subtype: "Warrant", company: s.company, ticker: s.gfTicker, expiry: s.warrants.expiry, daysLeft: d, value: s.wv, amount: s.warrants.amount, strike: s.warrants.exercise, price: s.price, itm: s.price > s.warrants.exercise });
+      }
+    });
+    return items.sort((a, b) => {
+      if (a.daysLeft === null) return 1;
+      if (b.daysLeft === null) return -1;
+      return a.daysLeft - b.daysLeft;
+    });
+  }, [eO, eS]);
+
+  // Retirement breakdowns
+  const rrspTotal = useMemo(() => (data.retirementAccounts || []).filter(r => r.type === "RRSP").reduce((s, r) => s + Number(r.balance || 0), 0), [data.retirementAccounts]);
+  const tfsaTotal = useMemo(() => (data.retirementAccounts || []).filter(r => r.type === "TFSA").reduce((s, r) => s + Number(r.balance || 0), 0), [data.retirementAccounts]);
+  const rrspRoom = useMemo(() => (data.retirementAccounts || []).filter(r => r.type === "RRSP").reduce((s, r) => s + Number(r.contributionRoom || 0), 0), [data.retirementAccounts]);
+  const tfsaRoom = useMemo(() => (data.retirementAccounts || []).filter(r => r.type === "TFSA").reduce((s, r) => s + Number(r.contributionRoom || 0), 0), [data.retirementAccounts]);
+
+  // Income this year
+  const curYear = new Date().getFullYear();
+  const incomeThisYear = useMemo(() => (data.incomeEvents || []).filter(e => e.date && new Date(e.date).getFullYear() === curYear).reduce((s, e) => s + Number(e.amount || 0), 0), [data.incomeEvents]);
+  const incomeCountThisYear = useMemo(() => (data.incomeEvents || []).filter(e => e.date && new Date(e.date).getFullYear() === curYear).length, [data.incomeEvents]);
+
+  // Current employer
+  const currentEmployer = useMemo(() => (data.employers || []).find(e => !e.endDate), [data.employers]);
+
+  // Realized P&L from tax events
+  const realizedPnL = useMemo(() => (data.taxEvents || []).reduce((s, e) => s + Number(e.gain || 0), 0), [data.taxEvents]);
+
   // Sort/filter
   const fsort = useCallback((items, keys) => { const q = search.trim().toLowerCase(); let l = items; if (q) l = items.filter(i => keys.some(k => String(i[k] || "").toLowerCase().includes(q))); return [...l].sort((a, b) => { const av = a[sortKey], bv = b[sortKey]; if (typeof av === "string") return sortDir === "asc" ? String(av || "").localeCompare(String(bv || "")) : String(bv || "").localeCompare(String(av || "")); return sortDir === "asc" ? (av || 0) - (bv || 0) : (bv || 0) - (av || 0); }); }, [search, sortKey, sortDir]);
   function ts(k) { if (sortKey === k) setSortDir(p => p === "asc" ? "desc" : "asc"); else { setSortKey(k); setSortDir("desc"); } }
@@ -698,7 +740,7 @@ export default function App({ session }) {
   };
 
   const stC = pSt === "done" ? t.gn : pSt === "error" ? t.rd : pSt === "loading" ? t.acc : t.mt;
-  const TABS = [["portfolio", "Portfolio", BarChart3], ["options", "Options", Briefcase], ["notes", "Notes", FileText], ["assets", "Assets", Home], ["tax", "Tax", Calculator], ["vesting", "Vesting", Calendar], ["networth", "Net Worth", PieIcon]];
+  const TABS = [["portfolio", "Portfolio", BarChart3], ["options", "Options", Briefcase], ["notes", "Notes", FileText], ["assets", "Assets", Home], ["tax", "Tax", Calculator], ["vesting", "Vesting", Calendar], ["networth", "Net Worth", PieIcon], ["expiry", "Expiry", Bell], ["employment", "Employment", User], ["retirement", "Retirement", Shield]];
 
   // Edit section toggle
   const isEd = sec => editing === sec;
@@ -754,6 +796,7 @@ export default function App({ session }) {
             <Cd dk={dk} icon={TrendingUp} title="Stocks + Warrants" value={$(totals.sv, cur)} sub={`${eS.length} positions`} />
             <Cd dk={dk} icon={Briefcase} title="Options + RSUs" value={$(totals.ov, cur)} sub={`${eO.length} grants`} />
             <Cd dk={dk} icon={totals.tp >= 0 ? TrendingUp : TrendingDown} title="Unrealized P&L" value={$(totals.tp, cur)} sub={P(totals.pp)} color={gc(totals.tp, dk)} />
+            <Cd dk={dk} icon={DollarSign} title="Realized P&L" value={$(realizedPnL, cur)} sub={`${(data.taxEvents||[]).length} sales logged`} color={gc(realizedPnL, dk)} />
           </div>
 
           <div style={_.panel}>
@@ -1009,6 +1052,47 @@ export default function App({ session }) {
             </div>
           )}
 
+          {/* Option Exercise Planner */}
+          {eO.filter(o => o.type === "Option" && o.intrinsic > 0).length > 0 && (
+            <div style={_.panel}>
+              <SectionHeader title="Exercise Planner" icon={Calculator} />
+              <div style={{ fontSize: 12, color: t.mt, marginBottom: 12 }}>In-the-money options — estimated cost and tax impact if exercised today. Tax uses your income from Tax Settings.</div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+                  <thead><tr>
+                    {["Company","Shares","Strike","Price","Spread/sh","Cost to Exercise","Taxable Benefit","Est. Tax","Net After Tax"].map(h => <th key={h} style={_.th}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {eO.filter(o => o.type === "Option" && o.intrinsic > 0).map(o => {
+                      const costToEx = o.amount * o.exercisePrice;
+                      const benefit = o.amount * o.intrinsic;
+                      const baseInc = Number(data.taxSettings?.annualIncome || 0);
+                      const prov = data.taxSettings?.province || "BC";
+                      const taxOnBase = calcTax(baseInc, prov);
+                      const taxOnWith = calcTax(baseInc + benefit, prov);
+                      const estTax = taxOnWith.total - taxOnBase.total;
+                      const net = benefit - estTax;
+                      return (
+                        <tr key={o.id}>
+                          <td style={{ ..._.td, fontWeight: 600 }}>{o.company}</td>
+                          <td style={{ ..._.td, ..._.mn }}>{N(o.amount)}</td>
+                          <td style={{ ..._.td, ..._.mn }}>{$(o.exercisePrice, "CAD", 3)}</td>
+                          <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{$(o.price, "CAD", 3)}</td>
+                          <td style={{ ..._.td, ..._.mn, color: t.gn, fontWeight: 600 }}>{$(o.intrinsic, "CAD", 3)}</td>
+                          <td style={{ ..._.td, ..._.mn }}>{$(costToEx)}</td>
+                          <td style={{ ..._.td, ..._.mn, color: t.rd }}>{$(benefit)}</td>
+                          <td style={{ ..._.td, ..._.mn, color: t.rd }}>{$(estTax)}</td>
+                          <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: gc(net, dk) }}>{$(net)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ fontSize: 10, color: t.mt, marginTop: 8 }}>Assumes 100% employment income inclusion. CCPC options may qualify for a 50% deduction — consult a tax professional.</div>
+            </div>
+          )}
+
           {/* Editable vesting events table */}
           <div style={_.panel}>
             <SectionHeader title="Vesting Schedule" icon={Calendar} section="vestingEvents">
@@ -1083,8 +1167,192 @@ export default function App({ session }) {
               ...(totals.sv > 0 ? [{ label: "Stocks + Warrants", value: totals.sv, items: [] }] : []),
               ...(totals.ov > 0 ? [{ label: "Options + RSUs", value: totals.ov, items: [] }] : []),
               ...(data.assets || []).filter(a => a.value > 0).map(a => ({ label: a.name, value: a.value, items: [] })),
+              ...(totals.rtT > 0 ? [{ label: "Retirement", value: totals.rtT, items: [] }] : []),
             ]} dark={dk} detail={pieDetail} onSelect={setPieDetail} /></div>
             <div style={_.panel}><h2 style={_.st}><TrendingUp size={15} style={{ color: t.acc }} /> History</h2><LineChart points={nwH} dark={dk} /></div>
+          </div>
+        </>)}
+
+        {/* ═══ EXPIRY DASHBOARD ═══ */}
+        {tab === "expiry" && (<>
+          <div style={_.grid}>
+            <Cd dk={dk} icon={Bell} title="Expiring ≤ 30 Days" value={expiryItems.filter(i => i.daysLeft !== null && i.daysLeft >= 0 && i.daysLeft <= 30).length + " items"} color={expiryItems.some(i => i.daysLeft !== null && i.daysLeft >= 0 && i.daysLeft <= 30) ? t.rd : undefined} />
+            <Cd dk={dk} icon={Clock} title="Expiring ≤ 90 Days" value={expiryItems.filter(i => i.daysLeft !== null && i.daysLeft >= 0 && i.daysLeft <= 90).length + " items"} />
+            <Cd dk={dk} icon={DollarSign} title="ITM Value at Risk" value={$(expiryItems.filter(i => i.itm && i.daysLeft !== null && i.daysLeft >= 0).reduce((s, i) => s + i.value, 0))} sub="In-the-money, expiring" color={t.gn} />
+            <Cd dk={dk} icon={X} title="Already Expired" value={expiryItems.filter(i => i.daysLeft !== null && i.daysLeft < 0).length + " items"} color={t.mt} />
+          </div>
+          <div style={_.panel}>
+            <SectionHeader title="All Expiry Dates" icon={Bell} />
+            {expiryItems.length === 0 ? (
+              <Empty icon={Clock} title="No expiry dates tracked" sub="Add expiry dates to your options and warrants in the Options tab to see them here." dark={dk} />
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+                  <thead><tr>
+                    {["Urgency","Company","Ticker","Type","Amount","Strike","Price","Value","Expiry","Days Left","Status"].map(h => <th key={h} style={_.th}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {expiryItems.map(item => {
+                      const expired = item.daysLeft !== null && item.daysLeft < 0;
+                      const critical = !expired && item.daysLeft !== null && item.daysLeft <= 30;
+                      const warning = !expired && !critical && item.daysLeft !== null && item.daysLeft <= 90;
+                      const urgBg = expired ? (dk?"#1c1c34":"#f3f4f6") : critical ? t.dns : warning ? (dk?"rgba(251,191,36,0.12)":"#fef3c7") : (dk?"#06403020":"#d1fae520");
+                      const urgFg = expired ? t.mt : critical ? t.rd : warning ? (dk?"#fbbf24":"#d97706") : t.gn;
+                      const urgLabel = expired ? "Expired" : critical ? "Critical" : warning ? "Warning" : "OK";
+                      return (
+                        <tr key={item.id} style={{ opacity: expired ? 0.45 : 1 }}>
+                          <td style={_.td}><span style={_.badge(urgBg, urgFg)}>{urgLabel}</span></td>
+                          <td style={{ ..._.td, fontWeight: 600 }}>{item.company}</td>
+                          <td style={{ ..._.td, fontSize: 11 }}>{item.ticker || "—"}</td>
+                          <td style={_.td}><span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.fg)}>{item.subtype}</span></td>
+                          <td style={{ ..._.td, ..._.mn }}>{N(item.amount)}</td>
+                          <td style={{ ..._.td, ..._.mn }}>{item.strike > 0 ? $(item.strike, "CAD", 3) : "—"}</td>
+                          <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{$(item.price, "CAD", 3)}</td>
+                          <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: item.value > 0 ? t.gn : t.mt }}>{$(item.value)}</td>
+                          <td style={{ ..._.td, ..._.mn }}>{fmtDate(item.expiry)}</td>
+                          <td style={{ ..._.td, ..._.mn, fontWeight: 600, color: urgFg }}>
+                            {item.daysLeft === null ? "—" : item.daysLeft < 0 ? `${Math.abs(item.daysLeft)}d ago` : item.daysLeft === 0 ? "Today!" : `${item.daysLeft}d`}
+                          </td>
+                          <td style={_.td}>
+                            {item.itm ? <span style={_.badge(dk?"#064e3b":"#d1fae5", dk?"#6ee7b7":"#047857")}>ITM</span> : <span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.mt)}>OTM</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>)}
+
+        {/* ═══ EMPLOYMENT & INCOME ═══ */}
+        {tab === "employment" && (<>
+          <div style={_.grid}>
+            <Cd dk={dk} icon={User} title="Active Employers" value={(data.employers||[]).filter(e => !e.endDate).length} />
+            <Cd dk={dk} icon={DollarSign} title="Current Base Salary" value={currentEmployer ? $(currentEmployer.baseSalary, cur) : "—"} sub={currentEmployer ? currentEmployer.name : "No active employer"} />
+            <Cd dk={dk} icon={TrendingUp} title={`Income ${curYear}`} value={$(incomeThisYear, cur)} sub={`${incomeCountThisYear} transactions`} />
+          </div>
+
+          <div style={_.panel}>
+            <SectionHeader title="Employment History" icon={Briefcase} section="employers">
+              {isEd("employers") && <button style={_.btn(t.acc, "#fff")} onClick={() => addItem("employers", { name: "", role: "", employmentType: "FTE", startDate: "", endDate: "", baseSalary: 0, targetBonus: 0, signingBonus: 0, notes: "" })}><Plus size={12} /> Add</button>}
+            </SectionHeader>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+                <thead><tr>
+                  {["Employer","Role","Type","Start","End","Base Salary","Target Bonus","Signing","Notes"].map(h => <th key={h} style={_.th}>{h}</th>)}
+                  {isEd("employers") && <th style={_.th}></th>}
+                </tr></thead>
+                <tbody>
+                  {(data.employers||[]).map(emp => {
+                    const ed = isEd("employers"), active = !emp.endDate;
+                    return (
+                      <tr key={emp.id} style={{ background: ed ? t.editBg : "transparent" }}>
+                        <td style={{ ..._.td, fontWeight: 600 }}>
+                          <EC editing={ed} value={emp.name} onChange={v => updData("employers", emp.id, "name", v)} />
+                          {!ed && active && <span style={{ ..._.badge(dk?"#1e3a5f":"#dbeafe", dk?"#93c5fd":"#2563eb"), marginLeft: 4 }}>Current</span>}
+                        </td>
+                        <td style={_.td}><EC editing={ed} value={emp.role} onChange={v => updData("employers", emp.id, "role", v)} /></td>
+                        <td style={_.td}>{ed ? <select style={{ ..._.sel, height: 28, fontSize: 11 }} value={emp.employmentType} onChange={e => updData("employers", emp.id, "employmentType", e.target.value)}>{["FTE","Contractor","Advisor","Board"].map(c => <option key={c}>{c}</option>)}</select> : <span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.fg)}>{emp.employmentType}</span>}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={emp.startDate||""} type="date" onChange={v => updData("employers", emp.id, "startDate", v)} /> : fmtDate(emp.startDate)}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={emp.endDate||""} type="date" onChange={v => updData("employers", emp.id, "endDate", v||null)} /> : (emp.endDate ? fmtDate(emp.endDate) : <span style={{ color: t.gn, fontWeight: 600 }}>Current</span>)}</td>
+                        <td style={{ ..._.td, ..._.mn, fontWeight: 600 }}>{ed ? <EC editing value={emp.baseSalary} type="number" onChange={v => updData("employers", emp.id, "baseSalary", v)} /> : $(emp.baseSalary, cur)}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={emp.targetBonus} type="number" onChange={v => updData("employers", emp.id, "targetBonus", v)} /> : $(emp.targetBonus||0, cur)}</td>
+                        <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={emp.signingBonus||0} type="number" onChange={v => updData("employers", emp.id, "signingBonus", v)} /> : $(emp.signingBonus||0, cur)}</td>
+                        <td style={{ ..._.td, color: t.mt, fontSize: 11 }}><EC editing={ed} value={emp.notes} onChange={v => updData("employers", emp.id, "notes", v)} /></td>
+                        {ed && <td style={_.td}><button onClick={() => delItem("employers", emp.id)} style={{ background: "none", border: "none", cursor: "pointer", color: t.rd }}><Trash2 size={13} /></button></td>}
+                      </tr>
+                    );
+                  })}
+                  {(data.employers||[]).length === 0 && <tr><td colSpan={10} style={{ padding: 0, border: "none" }}><Empty icon={Briefcase} title="No employment records" sub="Track employers, roles, salary, and bonus history." dark={dk} onAdd={() => { addItem("employers", { name: "", role: "", employmentType: "FTE", startDate: "", endDate: "", baseSalary: 0, targetBonus: 0, signingBonus: 0, notes: "" }); toggleEd("employers"); }} /></td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={_.panel}>
+            <SectionHeader title="Income Log" icon={DollarSign} section="incomeEvents">
+              {isEd("incomeEvents") && <button style={_.btn(t.acc, "#fff")} onClick={() => addItem("incomeEvents", { date: new Date().toISOString().split("T")[0], category: "Dividend", source: "", amount: 0, notes: "" })}><Plus size={12} /> Add</button>}
+            </SectionHeader>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>
+                  {["Date","Category","Source","Amount","Notes"].map(h => <th key={h} style={_.th}>{h}</th>)}
+                  {isEd("incomeEvents") && <th style={_.th}></th>}
+                </tr></thead>
+                <tbody>
+                  {[...(data.incomeEvents||[])].sort((a,b) => (b.date||"").localeCompare(a.date||"")).map(ev => {
+                    const ed = isEd("incomeEvents");
+                    return (
+                      <tr key={ev.id} style={{ background: ed ? t.editBg : "transparent" }}>
+                        <td style={{ ..._.td, ..._.mn }}>{ed ? <EC editing value={ev.date||""} type="date" onChange={v => updData("incomeEvents", ev.id, "date", v)} /> : fmtDate(ev.date)}</td>
+                        <td style={_.td}>{ed ? <select style={{ ..._.sel, height: 28, fontSize: 11 }} value={ev.category} onChange={e => updData("incomeEvents", ev.id, "category", e.target.value)}>{["Dividend","Interest","Bonus","Advisory","RSU Vest","Option Exercise","Other"].map(c => <option key={c}>{c}</option>)}</select> : <span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.fg)}>{ev.category}</span>}</td>
+                        <td style={_.td}><EC editing={ed} value={ev.source} onChange={v => updData("incomeEvents", ev.id, "source", v)} /></td>
+                        <td style={{ ..._.td, ..._.mn, fontWeight: 600, color: t.gn }}>{ed ? <EC editing value={ev.amount} type="number" step="0.01" onChange={v => updData("incomeEvents", ev.id, "amount", v)} /> : $(ev.amount, cur)}</td>
+                        <td style={{ ..._.td, color: t.mt, fontSize: 11 }}><EC editing={ed} value={ev.notes} onChange={v => updData("incomeEvents", ev.id, "notes", v)} /></td>
+                        {ed && <td style={_.td}><button onClick={() => delItem("incomeEvents", ev.id)} style={{ background: "none", border: "none", cursor: "pointer", color: t.rd }}><Trash2 size={13} /></button></td>}
+                      </tr>
+                    );
+                  })}
+                  {(data.incomeEvents||[]).length === 0 && <tr><td colSpan={6} style={{ padding: 0, border: "none" }}><Empty icon={DollarSign} title="No income logged" sub="Log dividends, bonuses, interest, RSU vest proceeds, and other non-bank income." dark={dk} onAdd={() => { addItem("incomeEvents", { date: new Date().toISOString().split("T")[0], category: "Dividend", source: "", amount: 0, notes: "" }); toggleEd("incomeEvents"); }} /></td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>)}
+
+        {/* ═══ RETIREMENT ACCOUNTS ═══ */}
+        {tab === "retirement" && (<>
+          <div style={_.grid}>
+            <Cd dk={dk} icon={Shield} title="Total Retirement" value={$(totals.rtT, cur)} sub={`${(data.retirementAccounts||[]).length} accounts`} />
+            <Cd dk={dk} icon={Coins} title="RRSP" value={$(rrspTotal, cur)} sub={rrspRoom > 0 ? `${$(rrspRoom, cur)} room left` : "No room tracked"} />
+            <Cd dk={dk} icon={TrendingUp} title="TFSA" value={$(tfsaTotal, cur)} sub={tfsaRoom > 0 ? `${$(tfsaRoom, cur)} room left` : "No room tracked"} />
+          </div>
+          <div style={_.panel}>
+            <SectionHeader title="Retirement Accounts" icon={Shield} section="retirementAccounts">
+              {isEd("retirementAccounts") && <button style={_.btn(t.acc, "#fff")} onClick={() => addItem("retirementAccounts", { name: "", type: "RRSP", balance: 0, contributionRoom: 0, annualContribution: 0, notes: "" })}><Plus size={12} /> Add Account</button>}
+            </SectionHeader>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 740 }}>
+                <thead><tr>
+                  {["Account Name","Type","Balance","Contribution Room","Annual Contribution","Notes"].map(h => <th key={h} style={_.th}>{h}</th>)}
+                  {isEd("retirementAccounts") && <th style={_.th}></th>}
+                </tr></thead>
+                <tbody>
+                  {(data.retirementAccounts||[]).map(acc => {
+                    const ed = isEd("retirementAccounts");
+                    const pctUsed = acc.contributionRoom > 0 ? Math.min(100, (acc.annualContribution||0) / acc.contributionRoom * 100) : 0;
+                    return (
+                      <tr key={acc.id} style={{ background: ed ? t.editBg : "transparent" }}>
+                        <td style={{ ..._.td, fontWeight: 600 }}><EC editing={ed} value={acc.name} onChange={v => updData("retirementAccounts", acc.id, "name", v)} /></td>
+                        <td style={_.td}>{ed ? <select style={{ ..._.sel, height: 28, fontSize: 11 }} value={acc.type} onChange={e => updData("retirementAccounts", acc.id, "type", e.target.value)}>{["RRSP","TFSA","401k","IRA","Pension","Other"].map(c => <option key={c}>{c}</option>)}</select> : <span style={_.badge(dk?"#2d2d4a":"#f3f4f6", t.fg)}>{acc.type}</span>}</td>
+                        <td style={{ ..._.td, ..._.mn, fontWeight: 700, color: t.gn }}>{ed ? <EC editing value={acc.balance} type="number" onChange={v => updData("retirementAccounts", acc.id, "balance", v)} /> : $(acc.balance, cur)}</td>
+                        <td style={{ ..._.td, ..._.mn }}>
+                          {ed ? <EC editing value={acc.contributionRoom||0} type="number" onChange={v => updData("retirementAccounts", acc.id, "contributionRoom", v)} /> : (acc.contributionRoom > 0 ? $(acc.contributionRoom, cur) : "—")}
+                        </td>
+                        <td style={{ ..._.td, ..._.mn }}>
+                          {ed ? <EC editing value={acc.annualContribution||0} type="number" onChange={v => updData("retirementAccounts", acc.id, "annualContribution", v)} /> : (
+                            <div>
+                              <div style={{ fontVariantNumeric: "tabular-nums" }}>{acc.annualContribution > 0 ? $(acc.annualContribution, cur) : "—"}</div>
+                              {acc.contributionRoom > 0 && acc.annualContribution > 0 && (
+                                <div style={{ marginTop: 4, height: 4, borderRadius: 2, background: dk?"#272748":"#e5e7eb", overflow: "hidden" }}>
+                                  <div style={{ height: "100%", borderRadius: 2, background: pctUsed > 90 ? t.rd : t.acc, width: `${pctUsed}%` }} />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ ..._.td, color: t.mt, fontSize: 11 }}><EC editing={ed} value={acc.notes} onChange={v => updData("retirementAccounts", acc.id, "notes", v)} /></td>
+                        {ed && <td style={_.td}><button onClick={() => delItem("retirementAccounts", acc.id)} style={{ background: "none", border: "none", cursor: "pointer", color: t.rd }}><Trash2 size={13} /></button></td>}
+                      </tr>
+                    );
+                  })}
+                  {(data.retirementAccounts||[]).length === 0 && <tr><td colSpan={7} style={{ padding: 0, border: "none" }}><Empty icon={Shield} title="No retirement accounts" sub="Track your RRSP, TFSA, 401k, and other registered accounts. Balances are included in your net worth." dark={dk} onAdd={() => { addItem("retirementAccounts", { name: "", type: "RRSP", balance: 0, contributionRoom: 0, annualContribution: 0, notes: "" }); toggleEd("retirementAccounts"); }} /></td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 10, color: t.mt, marginTop: 10 }}>Retirement account balances are included in your net worth calculation.</div>
           </div>
         </>)}
 
